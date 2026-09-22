@@ -157,14 +157,7 @@ final class MenuBarUI {
     func createStandardMenu(hasUpdate: Bool, shouldShowBadge: Bool, target: AnyObject?) -> NSMenu {
         let menu = NSMenu()
 
-        if settings.codexAccounts.count > 1 {
-            let codexSubmenu = createAccountSubmenu(accounts: settings.codexAccounts, currentId: settings.currentCodexAccountId, selector: #selector(MenuBarManager.switchCodexAccount(_:)), target: target)
-            let currentName = settings.currentCodexAccount?.displayName ?? "Codex"
-            let item = NSMenuItem(title: "Codex: \(currentName)", action: nil, keyEquivalent: "")
-            item.submenu = codexSubmenu
-            setMenuItemIcon(item, systemName: "person.2.fill")
-            menu.addItem(item)
-        }
+        // Codex 多账号同显，无需切换子菜单；账号启停与排序在认证设置页
 
         if settings.cursorAccounts.count > 1 {
             let cursorSubmenu = createAccountSubmenu(accounts: settings.cursorAccounts, currentId: settings.currentCursorAccountId, selector: #selector(MenuBarManager.switchCursorAccount(_:)), target: target)
@@ -175,7 +168,7 @@ final class MenuBarUI {
             menu.addItem(item)
         }
 
-        if settings.codexAccounts.count > 1 || settings.cursorAccounts.count > 1 {
+        if settings.cursorAccounts.count > 1 {
             menu.addItem(.separator())
         }
 
@@ -255,15 +248,21 @@ final class MenuBarUI {
     }
 
     func updateMenuBarIcon(
-        codexUsageData: CodexUsageData?,
+        codexAccountUsages: [CodexAccountUsage],
         cursorUsageData: CursorUsageData?,
         antigravityUsageData: AntigravityUsageData? = nil,
         hasUpdate: Bool = false,
         shouldShowBadge: Bool = false
     ) {
         guard let button = statusItem.button else { return }
+        // 悬停清单：多账号簇无标识，tooltip 说明各簇归属
+        button.toolTip = buildTooltip(
+            codexAccountUsages: codexAccountUsages,
+            cursorUsageData: cursorUsageData,
+            antigravityUsageData: antigravityUsageData
+        )
         let cacheKey = generateCacheKey(
-            codexUsageData: codexUsageData,
+            codexAccountUsages: codexAccountUsages,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData
         )
@@ -274,7 +273,7 @@ final class MenuBarUI {
         }
 
         let icon = iconRenderer.createIcon(
-            codexUsageData: codexUsageData,
+            codexAccountUsages: codexAccountUsages,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData,
             button: button
@@ -286,27 +285,74 @@ final class MenuBarUI {
         button.image = icon
     }
 
+    private func percentText(usedPercentage: Double) -> String {
+        UsageRingDisplay.percentLabel(
+            usedPercentage: usedPercentage,
+            showRemainingMode: settings.showRemainingMode
+        )
+    }
+
+    private func buildTooltip(
+        codexAccountUsages: [CodexAccountUsage],
+        cursorUsageData: CursorUsageData?,
+        antigravityUsageData: AntigravityUsageData?
+    ) -> String {
+        var lines: [String] = []
+        for entry in codexAccountUsages {
+            guard let usage = entry.usage else { continue }
+            let pct = [
+                usage.primary?.percentage,
+                usage.secondary?.percentage,
+                usage.extraUsage?.percentage
+            ].compactMap { $0 }.max()
+            if let pct {
+                lines.append("\(entry.displayName)  \(percentText(usedPercentage: pct))")
+            } else {
+                lines.append(entry.displayName)
+            }
+        }
+        if let cursorUsageData {
+            let pct = [
+                cursorUsageData.included?.percentage,
+                cursorUsageData.apiModels?.percentage,
+                cursorUsageData.onDemand?.percentage
+            ].compactMap { $0 }.max()
+            lines.append(pct.map { "Cursor  \(percentText(usedPercentage: $0))" } ?? "Cursor")
+        }
+        if let antigravityUsageData {
+            let pct = [
+                antigravityUsageData.geminiPrimary?.percentage ?? antigravityUsageData.primary?.percentage,
+                antigravityUsageData.geminiSecondary?.percentage ?? antigravityUsageData.secondary?.percentage,
+                antigravityUsageData.thirdPartyPrimary?.percentage,
+                antigravityUsageData.thirdPartySecondary?.percentage
+            ].compactMap { $0 }.max()
+            lines.append(pct.map { "Antigravity  \(percentText(usedPercentage: $0))" } ?? "Antigravity")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     func clearIconCache() {
         iconCache.removeAll()
     }
 
     private func generateCacheKey(
-        codexUsageData: CodexUsageData?,
+        codexAccountUsages: [CodexAccountUsage],
         cursorUsageData: CursorUsageData?,
         antigravityUsageData: AntigravityUsageData?
     ) -> String {
         var key = "\(settings.iconDisplayMode.rawValue)_\(settings.iconStyleMode.rawValue)_\(settings.displayMode.rawValue)_\(settings.showRemainingMode)"
-        if let codexUsageData {
-            let activeTypes = settings.getActiveCodexDisplayTypes(codexUsageData: codexUsageData, forMenuBar: true)
+        if codexAccountUsages.isEmpty {
+            key += "_no_codex"
+        }
+        for entry in codexAccountUsages {
+            let activeTypes = settings.getActiveCodexDisplayTypes(codexUsageData: entry.usage, forMenuBar: true)
                 .map(\.rawValue)
                 .sorted()
                 .joined(separator: ",")
-            key += "_cx\(activeTypes)"
-            if let primary = codexUsageData.primary { key += "_p\(Int(primary.percentage))" }
-            if let secondary = codexUsageData.secondary { key += "_s\(Int(secondary.percentage))" }
-            if let extra = codexUsageData.extraUsage?.percentage { key += "_e\(Int(extra))" }
-        } else {
-            key += "_no_codex"
+            key += "_cx\(entry.accountId.uuidString.prefix(8))_\(activeTypes)"
+            if let primary = entry.usage?.primary { key += "_p\(Int(primary.percentage))" }
+            if let secondary = entry.usage?.secondary { key += "_s\(Int(secondary.percentage))" }
+            if let extra = entry.usage?.extraUsage?.percentage { key += "_e\(Int(extra))" }
         }
         if let cursorUsageData {
             let activeTypes = settings.getActiveCursorDisplayTypes(cursorUsageData: cursorUsageData, forMenuBar: true)

@@ -7,11 +7,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct UsageDetailView: View {
-    @Binding var codexUsageData: CodexUsageData?
+    /// 多账号 Codex 用量（顺序 = 启用账号配置顺序；每账号一列）
+    @Binding var codexAccountUsages: [CodexAccountUsage]
     @Binding var cursorUsageData: CursorUsageData?
     @Binding var antigravityUsageData: AntigravityUsageData?
     @Binding var errorMessage: String?
-    @Binding var codexNeedsRelogin: Bool
     @Binding var cursorNeedsRelogin: Bool
     @Binding var antigravityNeedsRelogin: Bool
     @ObservedObject var refreshState: RefreshState
@@ -46,6 +46,20 @@ struct UsageDetailView: View {
         case antigravityRelogin
     }
 
+    /// 一列 = 一个展示单元（Codex 账号 / Cursor / Antigravity）
+    struct ColumnUnit: Identifiable, Hashable {
+        enum Source: Hashable {
+            case codexAccount(UUID)
+            case codexPlaceholder
+            case cursor
+            case antigravity
+            case antigravityThird
+        }
+
+        let source: Source
+        var id: String { "\(source)" }
+    }
+
     @State var codexAnimationType: LoadingAnimationType = .rainbow
     @State var cursorAnimationType: LoadingAnimationType = .rainbow
     @State var antigravityAnimationType: LoadingAnimationType = .rainbow
@@ -64,7 +78,7 @@ struct UsageDetailView: View {
 
     private var activeProviders: [ProviderType] {
         UserSettings.shared.orderedActiveProviders(
-            codexUsageData: codexUsageData,
+            hasCodexData: !codexAccountUsages.isEmpty,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData
         )
@@ -74,61 +88,80 @@ struct UsageDetailView: View {
         orderedProviders.isEmpty ? activeProviders : orderedProviders
     }
 
-    private var providerColumnWidth: CGFloat {
-        switch max(activeProviders.count, 1) {
-        case 4...: return 245
-        case 3: return 272
-        case 2: return 276
-        default: return 290
+    /// 展示单元序列：Codex 账号（配置顺序）→ 其他平台
+    private var columnUnits: [ColumnUnit] {
+        var units: [ColumnUnit] = []
+        for provider in displayProviders {
+            switch provider {
+            case .codex:
+                if codexAccountUsages.isEmpty {
+                    units.append(ColumnUnit(source: .codexPlaceholder))
+                } else {
+                    units.append(contentsOf: codexAccountUsages.map { ColumnUnit(source: .codexAccount($0.accountId)) })
+                }
+            case .cursor:
+                units.append(ColumnUnit(source: .cursor))
+            case .antigravity:
+                units.append(ColumnUnit(source: .antigravity))
+            case .antigravityThird:
+                units.append(ColumnUnit(source: .antigravityThird))
+            }
         }
+        return units
     }
 
-    private var showsMultipleProviders: Bool {
-        activeProviders.count > 1
+    /// 按每行至多 4 列折行分组
+    private func groupedUnitRows() -> [[ColumnUnit]] {
+        let widths = PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1))
+        var rows: [[ColumnUnit]] = []
+        var cursorIndex = columnUnits.startIndex
+        for width in widths {
+            let end = columnUnits.index(cursorIndex, offsetBy: width)
+            rows.append(Array(columnUnits[cursorIndex..<end]))
+            cursorIndex = end
+        }
+        return rows
+    }
+
+    /// 拖拽排序仅在"每列恰好一个平台、单行"时启用；
+    /// 多 Codex 账号展开为多列后，账号顺序以认证设置页拖拽为准。
+    private var supportsProviderReordering: Bool {
+        columnUnits.count == displayProviders.count && PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1)).count == 1
+    }
+
+    private func columnWidth(forRowCount count: Int) -> CGFloat {
+        PopoverLayout.columnWidth(columnCount: count)
     }
 
     private var popoverWidth: CGFloat {
-        switch activeProviders.count {
-        case 4...: return 1040
-        case 3: return 860
-        case 2: return 580
-        default: return 320
-        }
+        PopoverLayout.viewWidth(maxRowColumns: PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1)).max() ?? 1)
     }
 
-    private var activeDisplayTypes: [LimitType] {
-        var types: [LimitType] = []
-        if let codexUsageData {
-            types.append(contentsOf: UserSettings.shared.getActiveCodexDisplayTypes(codexUsageData: codexUsageData))
-        }
-        if let cursorUsageData {
-            types.append(contentsOf: UserSettings.shared.getActiveCursorDisplayTypes(cursorUsageData: cursorUsageData))
-        }
-        if let antigravityUsageData {
-            types.append(contentsOf: UserSettings.shared.getActiveAntigravityDisplayTypes(antigravityUsageData: antigravityUsageData, provider: .antigravity))
-            types.append(contentsOf: UserSettings.shared.getActiveAntigravityDisplayTypes(antigravityUsageData: antigravityUsageData, provider: .antigravityThird))
-        }
-        return types
+    private var showsMultipleProviders: Bool {
+        columnUnits.count > 1
+    }
+
+    private var limitRowCount: Int {
+        max(
+            PopoverLayout.limitRowCount(
+                codexUsages: codexAccountUsages.map { $0.usage },
+                cursorUsageData: cursorUsageData,
+                antigravityUsageData: antigravityUsageData
+            ),
+            columnUnits.isEmpty ? 0 : 1
+        )
     }
 
     private var contentSpacing: CGFloat {
-        activeDisplayTypes.count >= 2 ? 10 : 16
+        limitRowCount >= 2 ? 10 : 16
     }
 
     private var contentHeight: CGFloat {
-        // 多厂商时圆环上方多一行标题，底座加高，保证呼吸感与间距
-        let baseHeight: CGFloat = showsMultipleProviders ? 222 : 190
-        // 多列并排时高度应按「最高那一列」算，不能把各 provider 行数加总（会撑出大片空白）
-        let maxRowsPerProvider = [
-            UserSettings.shared.getActiveCodexDisplayTypes(codexUsageData: codexUsageData).count,
-            UserSettings.shared.getActiveCursorDisplayTypes(cursorUsageData: cursorUsageData).count,
-            UserSettings.shared.getActiveAntigravityDisplayTypes(antigravityUsageData: antigravityUsageData, provider: .antigravity).count,
-            UserSettings.shared.getActiveAntigravityDisplayTypes(antigravityUsageData: antigravityUsageData, provider: .antigravityThird).count
-        ].max() ?? 0
-        let hasAnyData = codexUsageData != nil || cursorUsageData != nil || antigravityUsageData != nil
-        let rowCount = max(maxRowsPerProvider, hasAnyData || !activeProviders.isEmpty ? 1 : 0)
-        // 明细行高度与 UnifiedLimitRow 共用同一份 metrics，避免两边漂移
-        return baseHeight + UnifiedLimitRowMetrics.textHeight(rowCount: rowCount)
+        PopoverLayout.contentHeight(
+            wrapRowCount: PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1)).count,
+            limitRowCount: limitRowCount,
+            showsMultiple: showsMultipleProviders
+        )
     }
 
     private var providerDividerHeight: CGFloat {
@@ -138,6 +171,10 @@ struct UsageDetailView: View {
     private var dashboardTitleText: String {
         let mode = showRemainingMode ? L.Usage.dashboardModeRemaining : L.Usage.dashboardModeUsed
         return L.Usage.dashboardTitle(appName: L.App.name, mode: mode)
+    }
+
+    private var codexAnyNeedsRelogin: Bool {
+        codexAccountUsages.contains { $0.needsRelogin }
     }
 
     private var headerView: some View {
@@ -168,7 +205,7 @@ struct UsageDetailView: View {
                             .resizable()
                             .frame(width: 18, height: 18)
                     }
-                    Text(L.Usage.codexTitle)
+                    Text(codexAccountUsages.first?.displayName ?? L.Usage.codexTitle)
                         .font(.headline)
                 }
             } else {
@@ -227,61 +264,87 @@ struct UsageDetailView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        if showsMultipleProviders {
-            HStack(alignment: .top, spacing: 8) {
-                ForEach(Array(displayProviders.enumerated()), id: \.element) { index, provider in
-                    if index > 0 {
-                        ProviderDivider(height: providerDividerHeight)
+        let rows = groupedUnitRows()
+        if rows.isEmpty {
+            if let errorMessage {
+                errorState(
+                    message: errorMessage,
+                    needsRelogin: codexAnyNeedsRelogin || cursorNeedsRelogin || antigravityNeedsRelogin,
+                    reloginAction: codexAnyNeedsRelogin ? .codexRelogin : (cursorNeedsRelogin ? .cursorRelogin : .antigravityRelogin)
+                )
+            } else {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                    Text(L.Usage.loading)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(height: 100)
+            }
+        } else if rows.count == 1, let single = rows[0].first, !showsMultipleProviders {
+            columnView(for: single)
+        } else {
+            VStack(spacing: 12) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, rowUnits in
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(Array(rowUnits.enumerated()), id: \.element) { index, unit in
+                            if index > 0 {
+                                ProviderDivider(height: providerDividerHeight)
+                            }
+                            columnContainer(for: unit)
+                                .frame(width: columnWidth(forRowCount: rowUnits.count))
+                        }
                     }
-
-                    draggableProviderColumn(for: provider)
                 }
             }
             .padding(.horizontal, 8)
-        } else if let singleProvider = activeProviders.first {
-            providerColumn(for: singleProvider)
-        } else if let errorMessage {
-            errorState(
-                message: errorMessage,
-                needsRelogin: codexNeedsRelogin || cursorNeedsRelogin || antigravityNeedsRelogin,
-                reloginAction: codexNeedsRelogin ? .codexRelogin : (cursorNeedsRelogin ? .cursorRelogin : .antigravityRelogin)
-            )
+        }
+    }
+
+    /// 列容器：支持排序时带拖拽；多账号展开后仅展示（账号顺序在认证页拖拽）
+    @ViewBuilder
+    private func columnContainer(for unit: ColumnUnit) -> some View {
+        if supportsProviderReordering, let provider = provider(for: unit) {
+            draggableColumn(for: unit, provider: provider)
         } else {
-            VStack(spacing: 12) {
-                ProgressView()
-                    .scaleEffect(1.2)
-                Text(L.Usage.loading)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .frame(height: 100)
+            columnView(for: unit)
+        }
+    }
+
+    private func provider(for unit: ColumnUnit) -> ProviderType? {
+        switch unit.source {
+        case .codexAccount, .codexPlaceholder: return .codex
+        case .cursor: return .cursor
+        case .antigravity: return .antigravity
+        case .antigravityThird: return .antigravityThird
         }
     }
 
     @ViewBuilder
-    private func providerColumn(for provider: ProviderType) -> some View {
+    private func columnView(for unit: ColumnUnit) -> some View {
         VStack(spacing: 14) {
             if showsMultipleProviders {
-                providerHeader(for: provider)
+                columnHeader(for: unit)
             }
-            providerColumnBody(for: provider)
+            columnBody(for: unit)
         }
         .frame(maxWidth: .infinity, alignment: .top)
     }
 
     /// 拖动时原位卡片整体变为半透明（0.35），保持原始尺寸稳定，不拉伸相邻卡片；放下前目标位不插占位，松开才落位。
     @ViewBuilder
-    private func draggableProviderColumn(for provider: ProviderType) -> some View {
+    private func draggableColumn(for unit: ColumnUnit, provider: ProviderType) -> some View {
         let isDragging = draggedProvider == provider
-        providerColumn(for: provider)
+        columnView(for: unit)
             .opacity(isDragging ? 0.35 : 1.0)
             .contentShape(Rectangle())
             .onDrag {
                 draggedProvider = provider
                 return NSItemProvider(object: provider.rawValue as NSString)
             } preview: {
-                providerColumn(for: provider)
-                    .frame(width: providerColumnWidth)
+                columnView(for: unit)
+                    .frame(width: columnWidth(forRowCount: 1))
                     .opacity(0.6)
                     .padding(8)
             }
@@ -295,14 +358,29 @@ struct UsageDetailView: View {
             )
     }
 
-    private func providerHeader(for provider: ProviderType) -> some View {
-        Text(providerTitle(for: provider))
+    private func columnHeader(for unit: ColumnUnit) -> some View {
+        Text(columnTitle(for: unit))
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(.secondary)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.top, 2)
             .help(L.Usage.dragToReorder)
+    }
+
+    private func columnTitle(for unit: ColumnUnit) -> String {
+        switch unit.source {
+        case .codexAccount(let accountId):
+            return codexAccountUsages.first { $0.accountId == accountId }?.displayName ?? L.Usage.codexTitle
+        case .codexPlaceholder:
+            return L.Usage.codexTitle
+        case .cursor:
+            return L.Usage.cursorTitle
+        case .antigravity:
+            return L.Usage.antigravityTitle
+        case .antigravityThird:
+            return "Antigravity Third"
+        }
     }
 
     private func providerTitle(for provider: ProviderType) -> String {
@@ -315,12 +393,13 @@ struct UsageDetailView: View {
     }
 
     @ViewBuilder
-    private func providerColumnBody(for provider: ProviderType) -> some View {
-        switch provider {
-        case .codex:
-            if let codexUsageData {
+    private func columnBody(for unit: ColumnUnit) -> some View {
+        switch unit.source {
+        case .codexAccount(let accountId):
+            let entry = codexAccountUsages.first { $0.accountId == accountId }
+            if let usage = entry?.usage {
                 CodexColumnView(
-                    codexUsageData: codexUsageData,
+                    codexUsageData: usage,
                     showRemainingMode: showRemainingMode,
                     refreshState: refreshState,
                     animationType: $codexAnimationType,
@@ -332,12 +411,21 @@ struct UsageDetailView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 errorState(
-                    message: codexNeedsRelogin ? L.Error.sessionExpired : (errorMessage ?? L.Usage.loading),
-                    needsRelogin: codexNeedsRelogin,
+                    message: entry?.needsRelogin == true
+                        ? L.Error.sessionExpired
+                        : (entry?.errorMessage ?? errorMessage ?? L.Usage.loading),
+                    needsRelogin: entry?.needsRelogin == true,
                     reloginAction: .codexRelogin
                 )
                 .frame(maxWidth: .infinity)
             }
+        case .codexPlaceholder:
+            errorState(
+                message: errorMessage ?? L.Usage.loading,
+                needsRelogin: false,
+                reloginAction: .codexRelogin
+            )
+            .frame(maxWidth: .infinity)
         case .cursor:
             if let cursorUsageData {
                 CursorColumnView(
@@ -359,32 +447,11 @@ struct UsageDetailView: View {
                 )
                 .frame(maxWidth: .infinity)
             }
-        case .antigravity:
+        case .antigravity, .antigravityThird:
+            let provider: ProviderType = unit.source == .antigravity ? .antigravity : .antigravityThird
             if let antigravityUsageData {
                 AntigravityColumnView(
-                    provider: .antigravity,
-                    antigravityUsageData: antigravityUsageData,
-                    showRemainingMode: showRemainingMode,
-                    refreshState: refreshState,
-                    animationType: $antigravityAnimationType,
-                    rotationAngle: $rotationAngle,
-                    remainingModeAnimationTrigger: remainingModeAnimationTrigger,
-                    onRefresh: { onMenuAction?(.refresh) },
-                    onAnimationHint: { showAnimationHint($0) }
-                )
-                .frame(maxWidth: .infinity)
-            } else {
-                errorState(
-                    message: antigravityNeedsRelogin ? L.Error.sessionExpired : (errorMessage ?? L.Usage.loading),
-                    needsRelogin: antigravityNeedsRelogin,
-                    reloginAction: .antigravityRelogin
-                )
-                .frame(maxWidth: .infinity)
-            }
-        case .antigravityThird:
-            if let antigravityUsageData {
-                AntigravityColumnView(
-                    provider: .antigravityThird,
+                    provider: provider,
                     antigravityUsageData: antigravityUsageData,
                     showRemainingMode: showRemainingMode,
                     refreshState: refreshState,
@@ -575,31 +642,50 @@ private extension UsageDetailView {
 }
 
 struct UsageDetailView_Previews: PreviewProvider {
-    @State static var sampleCodexData: CodexUsageData? = CodexUsageData(
-        primary: .init(percentage: 42, resetsAt: Date().addingTimeInterval(3600 * 2)),
-        secondary: .init(percentage: 58, resetsAt: Date().addingTimeInterval(3600 * 24 * 3)),
-        extraUsage: CodexExtraUsageData(
-            hasCredits: true,
-            unlimited: false,
-            overageLimitReached: false,
-            spendControlReached: false,
-            balance: Decimal(12),
-            approxLocalMessages: nil,
-            approxCloudMessages: nil
+    @State static var sampleCodexUsages: [CodexAccountUsage] = [
+        CodexAccountUsage(
+            accountId: UUID(uuidString: "11111111-0000-0000-0000-000000000001")!,
+            displayName: "工作号",
+            usage: CodexUsageData(
+                primary: .init(percentage: 42, resetsAt: Date().addingTimeInterval(3600 * 2)),
+                secondary: .init(percentage: 58, resetsAt: Date().addingTimeInterval(3600 * 24 * 3)),
+                extraUsage: CodexExtraUsageData(
+                    hasCredits: true,
+                    unlimited: false,
+                    overageLimitReached: false,
+                    spendControlReached: false,
+                    balance: Decimal(12),
+                    approxLocalMessages: nil,
+                    approxCloudMessages: nil
+                )
+            )
+        ),
+        CodexAccountUsage(
+            accountId: UUID(uuidString: "22222222-0000-0000-0000-000000000002")!,
+            displayName: "个人号",
+            usage: CodexUsageData(
+                primary: .init(percentage: 12, resetsAt: Date().addingTimeInterval(3600 * 5)),
+                secondary: .init(percentage: 88, resetsAt: Date().addingTimeInterval(3600 * 24)),
+                extraUsage: nil
+            )
+        ),
+        CodexAccountUsage(
+            accountId: UUID(uuidString: "33333333-0000-0000-0000-000000000003")!,
+            displayName: "测试号",
+            usage: nil,
+            needsRelogin: true
         )
-    )
+    ]
     @State static var error: String?
-    @State static var needsRelogin = false
     @State static var hasUpdate = false
     @State static var showBadge = false
 
     static var previews: some View {
         UsageDetailView(
-            codexUsageData: $sampleCodexData,
+            codexAccountUsages: $sampleCodexUsages,
             cursorUsageData: .constant(nil),
             antigravityUsageData: .constant(nil),
             errorMessage: $error,
-            codexNeedsRelogin: $needsRelogin,
             cursorNeedsRelogin: .constant(false),
             antigravityNeedsRelogin: .constant(false),
             refreshState: RefreshState(),

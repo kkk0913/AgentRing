@@ -176,7 +176,7 @@ final class DataRefreshManager: ObservableObject {
             codexApiServices.removeValue(forKey: accountId)
             lastCodexResetsAtByAccount.removeValue(forKey: accountId)
             codexSessionExpiredNotifiedAccounts.remove(accountId)
-            timerManager.invalidate(TimerID.codexResetVerify(accountId))
+            cancelCodexResetVerification(accountId: accountId)
         }
     }
 
@@ -407,7 +407,7 @@ final class DataRefreshManager: ObservableObject {
         }
         lastCodexResetsAtByAccount.removeAll()
         for accountId in Set(codexApiServices.keys).union(codexSessionExpiredNotifiedAccounts) {
-            timerManager.invalidate(TimerID.codexResetVerify(accountId))
+            cancelCodexResetVerification(accountId: accountId)
         }
         codexSessionExpiredNotifiedAccounts.removeAll()
     }
@@ -750,7 +750,9 @@ final class DataRefreshManager: ObservableObject {
     }
 
     private func cancelCodexResetVerification(accountId: UUID) {
-        timerManager.invalidate(TimerID.codexResetVerify(accountId))
+        for timerId in TimerID.codexResetVerify(accountId) {
+            timerManager.invalidate(timerId)
+        }
     }
 
     private func scheduleCodexResetVerification(resetsAt: Date, accountId: UUID) {

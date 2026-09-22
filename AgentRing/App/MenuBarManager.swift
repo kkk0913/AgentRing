@@ -52,12 +52,12 @@ final class MenuBarManager: ObservableObject {
     private var windowCloseObserver: NSObjectProtocol?
     private var languageChangeObserver: NSObjectProtocol?
 
-    @Published var codexUsageData: CodexUsageData?
+    /// 多账号用量（顺序 = 启用账号配置顺序）
+    @Published var codexAccountUsages: [CodexAccountUsage] = []
     @Published var cursorUsageData: CursorUsageData?
     @Published var antigravityUsageData: AntigravityUsageData?
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published var codexNeedsRelogin = false
     @Published var cursorNeedsRelogin = false
     @Published var antigravityNeedsRelogin = false
     @Published var hasAvailableUpdate = false
@@ -69,8 +69,9 @@ final class MenuBarManager: ObservableObject {
     }
 
     /// 蓝牙副屏：读取当前各 provider 数据（开关开启时立即推送用）
-    var dataManagerForBluetooth: (codexData: CodexUsageData?, cursorData: CursorUsageData?, antigravityData: AntigravityUsageData?) {
-        (codexUsageData, cursorUsageData, antigravityUsageData)
+    /// codex 只推勾选中的第一个账号（协议不变）
+    var dataManagerForBluetooth: (bluetoothCodexData: CodexUsageData?, cursorData: CursorUsageData?, antigravityData: AntigravityUsageData?) {
+        (dataManager.bluetoothCodexDataForSync, cursorUsageData, antigravityUsageData)
     }
 
     var shouldShowUpdateBadge: Bool {
@@ -87,9 +88,9 @@ final class MenuBarManager: ObservableObject {
     }
 
     private func setupDataBindings() {
-        dataManager.$codexUsageData
-            .sink { [weak self] data in
-                self?.codexUsageData = data
+        dataManager.$codexAccountUsages
+            .sink { [weak self] usages in
+                self?.codexAccountUsages = usages
                 self?.updateMenuBarIcon()
             }
             .store(in: &cancellables)
@@ -110,7 +111,6 @@ final class MenuBarManager: ObservableObject {
 
         dataManager.$isLoading.assign(to: &$isLoading)
         dataManager.$errorMessage.assign(to: &$errorMessage)
-        dataManager.$codexNeedsRelogin.assign(to: &$codexNeedsRelogin)
         dataManager.$cursorNeedsRelogin.assign(to: &$cursorNeedsRelogin)
         dataManager.$antigravityNeedsRelogin.assign(to: &$antigravityNeedsRelogin)
     }
@@ -233,34 +233,29 @@ final class MenuBarManager: ObservableObject {
 
     private func usageDetailContentSize() -> NSSize {
         let activeProviders = settings.orderedActiveProviders(
-            codexUsageData: codexUsageData,
+            hasCodexData: !codexAccountUsages.isEmpty,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData
         )
-        let activeProvidersCount = activeProviders.count
-        let showsMultiple = activeProvidersCount > 1
-        let baseHeight: CGFloat = showsMultiple ? 222 : 190
-        let rowHeight: CGFloat = 26
-        let spacing: CGFloat = 5
+        let unitCount = PopoverLayout.unitCount(
+            providers: activeProviders,
+            codexAccountCount: codexAccountUsages.count
+        )
+        let wrapRows = PopoverLayout.wrapRows(unitCount: max(unitCount, 1))
+        let maxRowColumns = wrapRows.max() ?? 1
 
-        let width: CGFloat = {
-            switch activeProvidersCount {
-            case 4...: return 1020
-            case 3: return 860
-            case 2: return 580
-            default: return 320
-            }
-        }()
-        let maxRowsPerProvider = [
-            settings.getActiveCodexDisplayTypes(codexUsageData: codexUsageData).count,
-            settings.getActiveCursorDisplayTypes(cursorUsageData: cursorUsageData).count,
-            settings.getActiveAntigravityDisplayTypes(antigravityUsageData: antigravityUsageData, provider: .antigravity).count,
-            settings.getActiveAntigravityDisplayTypes(antigravityUsageData: antigravityUsageData, provider: .antigravityThird).count
-        ].max() ?? 0
-        let hasAnyData = codexUsageData != nil || cursorUsageData != nil || antigravityUsageData != nil
-        let rowCount = max(maxRowsPerProvider, hasAnyData || activeProvidersCount > 0 ? 1 : 0)
-        let rowsHeight = CGFloat(rowCount) * rowHeight + CGFloat(max(0, rowCount - 1)) * spacing
-        return NSSize(width: width, height: baseHeight + rowsHeight)
+        let limitRowCount = PopoverLayout.limitRowCount(
+            codexUsages: codexAccountUsages.map { $0.usage },
+            cursorUsageData: cursorUsageData,
+            antigravityUsageData: antigravityUsageData
+        )
+        let rowCount = max(limitRowCount, unitCount > 0 ? 1 : 0)
+        let height = PopoverLayout.contentHeight(
+            wrapRowCount: wrapRows.count,
+            limitRowCount: rowCount,
+            showsMultiple: unitCount > 1
+        )
+        return NSSize(width: PopoverLayout.windowWidth(maxRowColumns: maxRowColumns), height: height)
     }
 
     private func closePopover() {
@@ -287,11 +282,6 @@ final class MenuBarManager: ObservableObject {
     @objc func openAuthSettings() { openSettingsWindow(tab: 1) }
     @objc func openBluetoothSettings() { openSettingsWindow(tab: 2) }
     @objc func openAbout() { openSettingsWindow(tab: 3) }
-
-    @objc func switchCodexAccount(_ sender: NSMenuItem) {
-        guard let account = sender.representedObject as? Account else { return }
-        settings.switchToCodexAccount(account)
-    }
 
     @objc func switchCursorAccount(_ sender: NSMenuItem) {
         guard let account = sender.representedObject as? Account else { return }
@@ -350,7 +340,7 @@ final class MenuBarManager: ObservableObject {
             ) { [weak self] _ in
                 NSApp.setActivationPolicy(.accessory)
                 self?.settingsWindow = nil
-                if self?.settings.hasAnyValidCredentials == true && self?.codexUsageData == nil && self?.cursorUsageData == nil {
+                if self?.settings.hasAnyValidCredentials == true && self?.codexAccountUsages.isEmpty != false && self?.cursorUsageData == nil {
                     self?.startRefreshing()
                 }
             }
@@ -393,7 +383,7 @@ final class MenuBarManager: ObservableObject {
 
     private func updateMenuBarIcon() {
         ui.updateMenuBarIcon(
-            codexUsageData: codexUsageData,
+            codexAccountUsages: codexAccountUsages,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData,
             hasUpdate: hasAvailableUpdate,
@@ -430,11 +420,10 @@ private struct UsageDetailHost: View {
 
     var body: some View {
         UsageDetailView(
-            codexUsageData: $manager.codexUsageData,
+            codexAccountUsages: $manager.codexAccountUsages,
             cursorUsageData: $manager.cursorUsageData,
             antigravityUsageData: $manager.antigravityUsageData,
             errorMessage: $manager.errorMessage,
-            codexNeedsRelogin: Binding(get: { manager.codexNeedsRelogin }, set: { _ in }),
             cursorNeedsRelogin: Binding(get: { manager.cursorNeedsRelogin }, set: { _ in }),
             antigravityNeedsRelogin: Binding(get: { manager.antigravityNeedsRelogin }, set: { _ in }),
             refreshState: manager.refreshState,

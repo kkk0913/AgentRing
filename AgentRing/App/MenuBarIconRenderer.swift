@@ -17,7 +17,7 @@ final class MenuBarIconRenderer {
     }
 
     func createIcon(
-        codexUsageData: CodexUsageData?,
+        codexAccountUsages: [CodexAccountUsage],
         cursorUsageData: CursorUsageData?,
         antigravityUsageData: AntigravityUsageData? = nil,
         hasUpdate: Bool = false,
@@ -25,7 +25,7 @@ final class MenuBarIconRenderer {
     ) -> NSImage {
         let isMonochrome = settings.iconStyleMode == .monochrome
         return buildIcon(
-            codexUsageData: codexUsageData,
+            codexAccountUsages: codexAccountUsages,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData,
             isMonochrome: isMonochrome,
@@ -34,21 +34,22 @@ final class MenuBarIconRenderer {
     }
 
     private func buildIcon(
-        codexUsageData: CodexUsageData?,
+        codexAccountUsages: [CodexAccountUsage],
         cursorUsageData: CursorUsageData?,
         antigravityUsageData: AntigravityUsageData? = nil,
         isMonochrome: Bool,
         button: NSStatusBarButton?
     ) -> NSImage {
-        let showingCodex = codexUsageData != nil
+        let showingCodex = !codexAccountUsages.isEmpty
         let showingCursor = cursorUsageData != nil
         let showingAntigravity = antigravityUsageData != nil
         let ordered = settings.orderedActiveProviders(
-            codexUsageData: codexUsageData,
+            hasCodexData: showingCodex,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData
         )
-        let showingMultiple = ordered.count > 1
+        // 多账号也算多单元：每账号一组圆环簇横排，品牌 logo 不随账号重复
+        let showingMultiple = PopoverLayout.unitCount(providers: ordered, codexAccountCount: codexAccountUsages.count) > 1
 
         switch settings.iconDisplayMode {
         case .none:
@@ -78,10 +79,12 @@ final class MenuBarIconRenderer {
                        let brand = createProviderBrandIcon(provider: .codex, isMonochrome: isMonochrome, size: providerBrandIconSize) {
                         icons.append(brand)
                     }
-                    if let codexUsageData {
+                    // 每个 Codex 账号一组圆环簇，顺序 = 配置顺序
+                    for entry in codexAccountUsages {
+                        guard let usage = entry.usage else { continue }
                         // 菜单栏用量环始终走系统模板色（浅色栏黑 / 深色栏白）
                         icons.append(contentsOf: buildCodexCluster(
-                            codex: codexUsageData,
+                            codex: usage,
                             isMonochrome: true,
                             button: button
                         ))
