@@ -489,3 +489,8 @@
 
 "settings.general.reset_section" = "Reset";
 "settings.general.reset_hint" = "Restore default settings";
+
+"account.multi_hint" = "Checked accounts are monitored and displayed; the first checked account syncs to companion displays";
+"account.enable_account" = "Enable this account";
+"bluetooth.sync_account" = "Syncing account: %@ (first checked)";
+"bluetooth.sync_account_none" = "No account";

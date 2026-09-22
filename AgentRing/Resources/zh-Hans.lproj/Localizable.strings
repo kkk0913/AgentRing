@@ -487,3 +487,8 @@
 
 "settings.general.reset_section" = "重置";
 "settings.general.reset_hint" = "恢复默认设置";
+
+"account.multi_hint" = "勾选的账户参与用量展示与刷新；副屏同步勾选中的第一个账户";
+"account.enable_account" = "启用此账户";
+"bluetooth.sync_account" = "当前同步账号：%@（勾选中的第一个）";
+"bluetooth.sync_account_none" = "无可用账号";

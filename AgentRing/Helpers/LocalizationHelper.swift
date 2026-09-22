@@ -43,6 +43,8 @@ enum L {
         static var deleteConfirmMessage: String { localized("account.delete_confirm_message") }
         static var delete: String { localized("account.delete") }
         static var cancel: String { localized("account.cancel") }
+        static var multiSelectHint: String { localized("account.multi_hint") }
+        static var enableAccount: String { localized("account.enable_account") }
         static var validateAndAdd: String { localized("account.validate_and_add") }
         static var multiOrgAdded: String { localized("account.multi_org_added") }
         static var codexAccounts: String { localized("account.codex_accounts") }
@@ -548,6 +550,10 @@ enum L {
         static var hint: String { localized("bluetooth.hint") }
         static var enable: String { localized("bluetooth.enable") }
         static var description: String { localized("bluetooth.description") }
+        static var syncAccountNone: String { localized("bluetooth.sync_account_none") }
+        static func syncAccount(_ name: String) -> String {
+            String(format: localized("bluetooth.sync_account"), name)
+        }
     }
 
     // MARK: - Usage Notification

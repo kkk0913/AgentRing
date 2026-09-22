@@ -44,6 +44,12 @@ struct BluetoothSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 20)
 
+                Text(L.SettingsBluetooth.syncAccount(settings.bluetoothCodexAccount?.displayName ?? L.SettingsBluetooth.syncAccountNone))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 20)
+
                 if settings.bluetoothSyncEnabled {
                     Divider()
                         .padding(.vertical, 2)

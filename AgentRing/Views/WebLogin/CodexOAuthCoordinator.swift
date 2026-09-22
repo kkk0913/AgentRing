@@ -156,7 +156,8 @@ final class CodexOAuthCoordinator: ObservableObject {
                 provider: .codex
             )
             let stored = UserSettings.shared.addCodexAccount(account)
-            UserSettings.shared.switchToCodexAccount(stored)
+            // 重新登录/新登录的账号自动启用（勾选拉取）
+            UserSettings.shared.setCodexAccountEnabled(stored, enabled: true)
 
             loginState = .success(accountName: stored.displayName)
             onAccountCreated?(stored)

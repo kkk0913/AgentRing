@@ -197,7 +197,8 @@ final class CodexWebLoginCoordinator: ObservableObject {
                 )
 
                 let storedAccount = UserSettings.shared.addCodexAccount(account)
-                UserSettings.shared.switchToCodexAccount(storedAccount)
+                // 重新登录/新登录的账号自动启用（勾选拉取）
+                UserSettings.shared.setCodexAccountEnabled(storedAccount, enabled: true)
 
                 self.loginState = .success(accountName: storedAccount.displayName)
                 self.onAccountCreated?(storedAccount)

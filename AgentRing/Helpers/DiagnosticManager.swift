@@ -87,10 +87,8 @@ class DiagnosticManager: ObservableObject {
     // MARK: - Private Methods
 
     private func buildRunners() -> [any DiagnosticRunner] {
-        var runners: [any DiagnosticRunner] = []
-        if !settings.codexAccounts.isEmpty {
-            runners.append(CodexDiagnosticRunner())
-        }
+        // 每个启用的 Codex 账号各出一份结果（带账号别名）
+        var runners: [any DiagnosticRunner] = settings.enabledCodexAccounts.map { CodexDiagnosticRunner(account: $0) }
         if settings.antigravityEnabled || settings.hasValidAntigravityCredentials {
             runners.append(AntigravityDiagnosticRunner())
         }

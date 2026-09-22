@@ -18,15 +18,22 @@ protocol DiagnosticRunner {
 final class CodexDiagnosticRunner: DiagnosticRunner {
 
     let providerType: ProviderType = .codex
+    /// 本次诊断的目标账号（多账号逐个出结果）
+    private let account: Account
     private let settings = UserSettings.shared
 
+    init(account: Account) {
+        self.account = account
+    }
+
     func run() async -> ProviderDiagnosticResult {
-        guard settings.hasValidCodexCredentials else {
+        let sessionToken = settings.codexAccountToken(account.id)
+        guard !sessionToken.isEmpty else {
             return makeNoCredentialsResult()
         }
 
-        let sessionToken = settings.codexSessionToken
         var credentials: [String: String] = [
+            "Account": account.displayName,
             "Session Token": SensitiveDataRedactor.redactCodexSessionToken(sessionToken)
         ]
         var steps: [DiagnosticStep] = []

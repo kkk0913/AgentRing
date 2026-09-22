@@ -112,7 +112,8 @@ struct UsageDetailView: View {
 
     /// 按每行至多 4 列折行分组
     private func groupedUnitRows() -> [[ColumnUnit]] {
-        let widths = PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1))
+        guard !columnUnits.isEmpty else { return [] }
+        let widths = PopoverLayout.wrapRows(unitCount: columnUnits.count)
         var rows: [[ColumnUnit]] = []
         var cursorIndex = columnUnits.startIndex
         for width in widths {
