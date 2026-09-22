@@ -37,14 +37,15 @@ final class CodexSilentRefreshCoordinator: NSObject {
     // MARK: - Public
 
     /// 触发静默刷新。成功时 Result.success 携带最新的 session-token 字符串。
-    func refresh(completion: @escaping (Result<String, Error>) -> Void) {
+    /// - Parameter accountId: 目标 Codex 账号（遗留 session-token 账号的刷新链；OAuth 账号不走此处）
+    func refresh(accountId: UUID? = nil, completion: @escaping (Result<String, Error>) -> Void) {
         guard !isRefreshing else {
             Logger.settings.debug("CodexSilentRefresh: 刷新已在进行中，跳过")
             completion(.failure(UsageError.networkError))
             return
         }
 
-        let sessionToken = UserSettings.shared.codexSessionToken
+        let sessionToken = accountId.map { UserSettings.shared.codexAccountToken($0) } ?? ""
         guard !sessionToken.isEmpty else {
             completion(.failure(UsageError.noCredentials))
             return
@@ -164,10 +165,12 @@ final class CodexSilentRefreshCoordinator: NSObject {
                 return
             }
 
-            let currentToken = UserSettings.shared.codexSessionToken
+            let currentToken = accountId.map { UserSettings.shared.codexAccountToken($0) } ?? ""
             if newToken != currentToken {
                 Logger.settings.notice("CodexSilentRefresh: 获取到新 session-token，静默写回 Keychain")
-                UserSettings.shared.silentlyUpdateCurrentCodexSessionToken(newToken)
+                if let accountId {
+                    UserSettings.shared.silentlyUpdateCodexSessionToken(accountId: accountId, token: newToken)
+                }
             } else {
                 Logger.settings.info("CodexSilentRefresh: session-token 未变化（服务端未续期）")
             }

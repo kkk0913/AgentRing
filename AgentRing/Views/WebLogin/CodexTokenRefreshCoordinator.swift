@@ -30,14 +30,15 @@ final class CodexTokenRefreshCoordinator: NSObject {
     // MARK: - Public
 
     /// 刷新 accessToken。成功时 Result.success 携带新鲜的 accessToken 字符串。
-    func refresh(completion: @escaping (Result<String, Error>) -> Void) {
+    /// - Parameter accountId: 目标 Codex 账号（遗留 session-token 账号的刷新链；OAuth 账号不走此处）
+    func refresh(accountId: UUID? = nil, completion: @escaping (Result<String, Error>) -> Void) {
         guard !isRefreshing else {
             Logger.settings.debug("CodexTokenRefresh: 刷新已在进行中，跳过")
             completion(.failure(UsageError.networkError))
             return
         }
 
-        let sessionToken = UserSettings.shared.codexSessionToken
+        let sessionToken = accountId.map { UserSettings.shared.codexAccountToken($0) } ?? ""
         guard !sessionToken.isEmpty else {
             completion(.failure(UsageError.noCredentials))
             return
@@ -105,11 +106,13 @@ final class CodexTokenRefreshCoordinator: NSObject {
             let chatgptURL = URL(string: "https://chatgpt.com")!
             let storedCookies = HTTPCookieStorage.shared.cookies(for: chatgptURL) ?? []
             if let newToken = CodexWebLoginCoordinator.extractSessionToken(from: storedCookies) {
-                let currentToken = UserSettings.shared.codexSessionToken
+                let currentToken = accountId.map { UserSettings.shared.codexAccountToken($0) } ?? ""
                 if newToken != currentToken {
                     Logger.settings.notice("CodexTokenRefresh: URLSession 检测到新 session-token，静默写回")
-                    DispatchQueue.main.async {
-                        UserSettings.shared.silentlyUpdateCurrentCodexSessionToken(newToken)
+                    if let accountId {
+                        DispatchQueue.main.async {
+                            UserSettings.shared.silentlyUpdateCodexSessionToken(accountId: accountId, token: newToken)
+                        }
                     }
                 } else {
                     Logger.settings.debug("CodexTokenRefresh: session-token 未变化")

@@ -26,27 +26,33 @@ final class NotificationManager {
         }
     }
 
-    func checkAndNotify(codexUsageData: CodexUsageData, previousData: CodexUsageData?) {
+    func checkAndNotify(codexUsageData: CodexUsageData, previousData: CodexUsageData?, account: Account) {
         checkLimit(
             type: .codexPrimary,
             current: codexUsageData.primary?.percentage,
             previous: previousData?.primary?.percentage,
             currentResetsAt: codexUsageData.primary?.resetsAt,
-            previousResetsAt: previousData?.primary?.resetsAt
+            previousResetsAt: previousData?.primary?.resetsAt,
+            accountId: account.id,
+            accountLabel: account.displayName
         )
         checkLimit(
             type: .codexSecondary,
             current: codexUsageData.secondary?.percentage,
             previous: previousData?.secondary?.percentage,
             currentResetsAt: codexUsageData.secondary?.resetsAt,
-            previousResetsAt: previousData?.secondary?.resetsAt
+            previousResetsAt: previousData?.secondary?.resetsAt,
+            accountId: account.id,
+            accountLabel: account.displayName
         )
         checkLimit(
             type: .codexExtraUsage,
             current: codexUsageData.extraUsage?.percentage,
             previous: previousData?.extraUsage?.percentage,
             currentResetsAt: nil,
-            previousResetsAt: nil
+            previousResetsAt: nil,
+            accountId: account.id,
+            accountLabel: account.displayName
         )
     }
 
@@ -56,14 +62,16 @@ final class NotificationManager {
             current: cursorUsageData.included?.percentage,
             previous: previousData?.included?.percentage,
             currentResetsAt: cursorUsageData.included?.resetsAt,
-            previousResetsAt: previousData?.included?.resetsAt
+            previousResetsAt: previousData?.included?.resetsAt,
+            accountId: UserSettings.shared.currentCursorAccountId
         )
         checkLimit(
             type: .cursorOnDemand,
             current: cursorUsageData.apiModels?.percentage ?? cursorUsageData.onDemand?.percentage,
             previous: previousData?.apiModels?.percentage ?? previousData?.onDemand?.percentage,
             currentResetsAt: cursorUsageData.apiModels?.resetsAt ?? cursorUsageData.onDemand?.resetsAt,
-            previousResetsAt: previousData?.apiModels?.resetsAt ?? previousData?.onDemand?.resetsAt
+            previousResetsAt: previousData?.apiModels?.resetsAt ?? previousData?.onDemand?.resetsAt,
+            accountId: UserSettings.shared.currentCursorAccountId
         )
     }
 
@@ -72,42 +80,46 @@ final class NotificationManager {
         current: Double?,
         previous: Double?,
         currentResetsAt: Date?,
-        previousResetsAt: Date?
+        previousResetsAt: Date?,
+        accountId: UUID?,
+        accountLabel: String? = nil
     ) {
         guard let currentPct = current else { return }
 
         if let previousPct = previous,
            isReset(currentPct: currentPct, previousPct: previousPct, currentResetsAt: currentResetsAt, previousResetsAt: previousResetsAt) {
-            sendResetNotification(limitType: type)
-            notifiedWarnings.removeValue(forKey: notificationKey(for: type))
-            notifiedWarnings.removeValue(forKey: notificationKey(for: type, suffix: "75"))
+            sendResetNotification(limitType: type, accountLabel: accountLabel)
+            notifiedWarnings.removeValue(forKey: notificationKey(for: type, accountId: accountId))
+            notifiedWarnings.removeValue(forKey: notificationKey(for: type, accountId: accountId, suffix: "75"))
             return
         }
 
         let previousPct = previous ?? 0
 
         if type == .codexSecondary {
-            let earlyKey = notificationKey(for: type, suffix: "75")
+            let earlyKey = notificationKey(for: type, accountId: accountId, suffix: "75")
             let alreadyNotifiedEarly = notifiedWarnings[earlyKey] ?? false
             if !alreadyNotifiedEarly && previousPct < secondaryEarlyWarningThreshold && currentPct >= secondaryEarlyWarningThreshold {
-                sendUsageWarning(limitType: type, percentage: currentPct)
+                sendUsageWarning(limitType: type, percentage: currentPct, accountLabel: accountLabel)
                 notifiedWarnings[earlyKey] = true
             }
         }
 
-        let warningKey = notificationKey(for: type)
+        let warningKey = notificationKey(for: type, accountId: accountId)
         let alreadyNotified = notifiedWarnings[warningKey] ?? false
         if !alreadyNotified && previousPct < warningThreshold && currentPct >= warningThreshold {
-            sendUsageWarning(limitType: type, percentage: currentPct)
+            sendUsageWarning(limitType: type, percentage: currentPct, accountLabel: accountLabel)
             notifiedWarnings[warningKey] = true
         }
     }
 
-    private func notificationKey(for type: LimitType, suffix: String? = nil) -> String {
-        let accountId = type.provider == .cursor
-            ? UserSettings.shared.currentCursorAccountId
-            : UserSettings.shared.currentCodexAccountId
-        return Self.makeNotificationKey(
+    /// 通知正文的账号前缀（多账号同显时区分归属）
+    private static func accountPrefix(_ accountLabel: String?) -> String {
+        accountLabel.map { "\($0) · " } ?? ""
+    }
+
+    private func notificationKey(for type: LimitType, accountId: UUID?, suffix: String? = nil) -> String {
+        Self.makeNotificationKey(
             provider: type.provider,
             accountId: accountId,
             limitType: type,
@@ -151,10 +163,10 @@ final class NotificationManager {
         return false
     }
 
-    private func sendUsageWarning(limitType: LimitType, percentage: Double) {
+    private func sendUsageWarning(limitType: LimitType, percentage: Double, accountLabel: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = L.UsageNotification.warningTitle
-        content.body = L.UsageNotification.warningBody(limitType.displayName, Int(percentage))
+        content.body = Self.accountPrefix(accountLabel) + L.UsageNotification.warningBody(limitType.displayName, Int(percentage))
         content.sound = .default
 
         let request = UNNotificationRequest(
@@ -165,10 +177,10 @@ final class NotificationManager {
         UNUserNotificationCenter.current().add(request)
     }
 
-    private func sendResetNotification(limitType: LimitType) {
+    private func sendResetNotification(limitType: LimitType, accountLabel: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = L.UsageNotification.resetTitle
-        content.body = L.UsageNotification.resetBody(limitType.displayName)
+        content.body = Self.accountPrefix(accountLabel) + L.UsageNotification.resetBody(limitType.displayName)
         content.sound = .default
 
         let request = UNNotificationRequest(
@@ -193,14 +205,14 @@ final class NotificationManager {
         UNUserNotificationCenter.current().add(request)
     }
 
-    func sendCodexSessionExpiredNotification() {
+    func sendCodexSessionExpiredNotification(accountLabel: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = L.UsageNotification.codexSessionExpiredTitle
-        content.body = L.UsageNotification.codexSessionExpiredBody
+        content.body = Self.accountPrefix(accountLabel) + L.UsageNotification.codexSessionExpiredBody
         content.sound = .default
 
         let request = UNNotificationRequest(
-            identifier: "codex_session_expired",
+            identifier: "codex_session_expired_\(accountLabel ?? "all")",
             content: content,
             trigger: nil
         )
