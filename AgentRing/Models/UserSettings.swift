@@ -252,14 +252,11 @@ final class UserSettings: ObservableObject {
         didSet { saveCodexAccounts() }
     }
 
-    @Published var currentCodexAccountId: UUID? {
+    /// 停用的 Codex 账号 id（认证页复选框未勾选；缺省空集 = 全部启用，兼容旧数据）
+    @Published var disabledCodexAccountIds: Set<UUID> = [] {
         didSet {
-            let key = Self.currentCodexAccountIdKey
-            if let id = currentCodexAccountId {
-                defaults.set(id.uuidString, forKey: key)
-            } else {
-                defaults.removeObject(forKey: key)
-            }
+            defaults.set(disabledCodexAccountIds.map(\.uuidString), forKey: "disabledCodexAccountIds")
+            NotificationCenter.default.post(name: .settingsChanged, object: nil)
         }
     }
 
@@ -278,18 +275,58 @@ final class UserSettings: ObservableObject {
         }
     }
 
-    var currentCodexAccount: Account? {
-        guard let id = currentCodexAccountId else { return codexAccounts.first }
-        return codexAccounts.first { $0.id == id } ?? codexAccounts.first
-    }
-
     var currentCursorAccount: Account? {
         guard let id = currentCursorAccountId else { return cursorAccounts.first }
         return cursorAccounts.first { $0.id == id } ?? cursorAccounts.first
     }
 
-    var codexSessionToken: String {
-        currentCodexAccount?.credentialToken ?? ""
+    /// 启用（勾选）的 Codex 账号，顺序 = 配置顺序
+    var enabledCodexAccounts: [Account] {
+        MultiAccountPlanning.enabledAccountIDs(
+            accountIDs: codexAccounts.map(\.id),
+            disabledIDs: disabledCodexAccountIds
+        ).compactMap { id in codexAccounts.first { $0.id == id } }
+    }
+
+    /// 副屏同步账号：勾选中的第一个
+    var bluetoothCodexAccount: Account? {
+        guard let id = MultiAccountPlanning.bluetoothCodexAccountID(
+            accountIDs: codexAccounts.map(\.id),
+            disabledIDs: disabledCodexAccountIds
+        ) else { return nil }
+        return codexAccounts.first { $0.id == id }
+    }
+
+    /// 按账号取凭据（多账号并行拉取用）
+    func codexAccountToken(_ accountId: UUID) -> String {
+        codexAccounts.first { $0.id == accountId }?.credentialToken ?? ""
+    }
+
+    func isCodexAccountEnabled(_ accountId: UUID) -> Bool {
+        !disabledCodexAccountIds.contains(accountId)
+    }
+
+    func setCodexAccountEnabled(_ account: Account, enabled: Bool) {
+        if enabled {
+            disabledCodexAccountIds.remove(account.id)
+        } else {
+            disabledCodexAccountIds.insert(account.id)
+        }
+        postAccountChanged()
+    }
+
+    /// 拖拽排序：按 fromOffsets 移动到 toOffset（拖拽回调原样传入）
+    func moveCodexAccounts(from source: IndexSet, to destination: Int) {
+        codexAccounts.move(fromOffsets: source, toOffset: destination)
+        postAccountChanged()
+    }
+
+    /// 按账号静默更新 session-token / refresh_token（轮换写回）
+    func silentlyUpdateCodexSessionToken(accountId: UUID, token: String) {
+        guard let index = codexAccounts.firstIndex(where: { $0.id == accountId }),
+              codexAccounts[index].credentialToken != token else { return }
+        codexAccounts[index].credentialToken = token
+        Logger.settings.notice("Codex session-token 已静默更新（按账号写回）")
     }
 
     var cursorSessionToken: String {
@@ -297,7 +334,7 @@ final class UserSettings: ObservableObject {
     }
 
     var hasValidCodexCredentials: Bool {
-        !codexSessionToken.isEmpty
+        enabledCodexAccounts.contains { !$0.credentialToken.isEmpty }
     }
 
     var hasValidCursorCredentials: Bool {
@@ -476,7 +513,7 @@ final class UserSettings: ObservableObject {
 
     private func postBluetoothImmediatePush() {
         let dataManager = (NSApp.delegate as? AppDelegate)?.menuBarManager?.dataManagerForBluetooth
-        let codex = dataManager?.codexData
+        let codex = dataManager?.bluetoothCodexData
         let cursor = dataManager?.cursorData
         let antigravity = dataManager?.antigravityData
         // pushPayload 是 MainActor，从设置页切换开关必然在主线程，直接 hop
@@ -593,14 +630,6 @@ final class UserSettings: ObservableObject {
         refreshMode == .smart ? currentMonitoringMode.interval : refreshInterval
     }
 
-    private static var currentCodexAccountIdKey: String {
-        #if DEBUG
-        return "DEBUG_currentCodexAccountId"
-        #else
-        return "currentCodexAccountId"
-        #endif
-    }
-
     private static var currentCursorAccountIdKey: String {
         #if DEBUG
         return "DEBUG_currentCursorAccountId"
@@ -620,12 +649,14 @@ final class UserSettings: ObservableObject {
         }
         codexAccounts = mappedCodexAccounts
 
-        if let idString = defaults.string(forKey: Self.currentCodexAccountIdKey),
-           let id = UUID(uuidString: idString) {
-            currentCodexAccountId = id
+        if let rawDisabled = defaults.array(forKey: "disabledCodexAccountIds") as? [String] {
+            disabledCodexAccountIds = Set(rawDisabled.compactMap(UUID.init(uuidString:)))
         } else {
-            currentCodexAccountId = mappedCodexAccounts.first?.id
+            disabledCodexAccountIds = []
         }
+        // 清理已废弃的"当前账号"遗留 key
+        defaults.removeObject(forKey: "currentCodexAccountId")
+        defaults.removeObject(forKey: "DEBUG_currentCodexAccountId")
 
         let loadedCursorAccounts = (keychain.loadCursorAccounts() ?? []).map { account -> Account in
             var copy = account
@@ -784,12 +815,12 @@ final class UserSettings: ObservableObject {
     }
 
     func orderedActiveProviders(
-        codexUsageData: CodexUsageData? = nil,
+        hasCodexData: Bool = false,
         cursorUsageData: CursorUsageData? = nil,
         antigravityUsageData: AntigravityUsageData? = nil
     ) -> [ProviderType] {
         var active: Set<ProviderType> = []
-        if hasValidCodexCredentials || codexUsageData != nil {
+        if hasValidCodexCredentials || hasCodexData {
             active.insert(.codex)
         }
         if hasValidCursorCredentials || cursorUsageData != nil {
@@ -894,9 +925,6 @@ final class UserSettings: ObservableObject {
             codexAccounts[index].accountIdentifier = account.accountIdentifier
             codexAccounts[index].accountName = account.accountName
             codexAccounts[index].provider = .codex
-            if currentCodexAccountId == nil {
-                currentCodexAccountId = codexAccounts[index].id
-            }
             Logger.settings.notice("更新 Codex 账户: \(self.codexAccounts[index].displayName)")
             postAccountChanged()
             return codexAccounts[index]
@@ -905,9 +933,8 @@ final class UserSettings: ObservableObject {
         var storedAccount = account
         storedAccount.provider = .codex
         codexAccounts.append(storedAccount)
-        if codexAccounts.count == 1 {
-            currentCodexAccountId = storedAccount.id
-        }
+        // 新登录账号默认启用
+        disabledCodexAccountIds.remove(storedAccount.id)
         ensureDefaultCodexDisplayTypesForCustomMode()
         Logger.settings.notice("添加 Codex 账户: \(storedAccount.displayName)")
         postAccountChanged()
@@ -916,36 +943,17 @@ final class UserSettings: ObservableObject {
 
     func removeCodexAccount(_ account: Account) {
         guard let index = codexAccounts.firstIndex(where: { $0.id == account.id }) else { return }
-        let wasCurrent = currentCodexAccountId == account.id
         codexAccounts.remove(at: index)
+        disabledCodexAccountIds.remove(account.id)
         NotificationManager.shared.resetNotificationStates(for: .codex, accountId: account.id)
-        if wasCurrent {
-            currentCodexAccountId = codexAccounts.first?.id
-            postAccountChanged()
-        }
-        Logger.settings.notice("删除 Codex 账户: \(account.displayName)")
-    }
-
-    func switchToCodexAccount(_ account: Account) {
-        guard account.id != currentCodexAccountId else { return }
-        guard codexAccounts.contains(where: { $0.id == account.id }) else { return }
-        currentCodexAccountId = account.id
-        Logger.settings.notice("切换到 Codex 账户: \(account.displayName)")
         postAccountChanged()
+        Logger.settings.notice("删除 Codex 账户: \(account.displayName)")
     }
 
     func updateCodexAccount(_ account: Account, alias: String?) {
         guard let index = codexAccounts.firstIndex(where: { $0.id == account.id }) else { return }
         codexAccounts[index].alias = alias
         Logger.settings.notice("更新 Codex 账户别名: \(self.codexAccounts[index].displayName)")
-    }
-
-    func silentlyUpdateCurrentCodexSessionToken(_ token: String) {
-        guard let id = currentCodexAccountId,
-              let index = codexAccounts.firstIndex(where: { $0.id == id }),
-              codexAccounts[index].credentialToken != token else { return }
-        codexAccounts[index].credentialToken = token
-        Logger.settings.notice("Codex session-token 已静默更新")
     }
 
     @discardableResult
