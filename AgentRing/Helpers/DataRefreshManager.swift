@@ -9,23 +9,26 @@ import OSLog
 import AppKit
 
 final class DataRefreshManager: ObservableObject {
-    private let codexApiService = CodexAPIService()
+    /// 按账号的 API 服务实例池（token 缓存 / OAuth 单飞 / 轮换写回均按实例隔离）
+    private var codexApiServices: [UUID: CodexAPIService] = [:]
     private let cursorApiService = CursorAPIService()
     private let antigravityApiService = AntigravityAPIService()
     private let timerManager = TimerManager()
     private let settings = UserSettings.shared
 
-    @Published var codexUsageData: CodexUsageData?
+    /// 多账号用量（顺序 = 启用账号配置顺序）
+    @Published var codexAccountUsages: [CodexAccountUsage] = []
     @Published var cursorUsageData: CursorUsageData?
     @Published var antigravityUsageData: AntigravityUsageData?
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published private(set) var codexNeedsRelogin = false
     @Published private(set) var cursorNeedsRelogin = false
     @Published private(set) var antigravityNeedsRelogin = false
     let refreshState = RefreshState()
 
-    private var lastCodexResetsAt: Date?
+    /// 每账号上次 primary resetsAt（重置验证定时器按账号挂）
+    private var lastCodexResetsAtByAccount: [UUID: Date] = [:]
+    private var codexSessionExpiredNotifiedAccounts: Set<UUID> = []
     private var lastCursorResetsAt: Date?
     private var lastAntigravityResetsAt: Date?
     private var lastManualRefreshTime: Date?
@@ -34,20 +37,40 @@ final class DataRefreshManager: ObservableObject {
     private let minimumAnimationDuration: TimeInterval = 1.0
     private var refreshActivity: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
-    private var codexSessionExpiredNotified = false
     private var cursorSessionExpiredNotified = false
     private var antigravitySessionExpiredNotified = false
     private var pendingFetches = 0
 
-    private var shouldFetchCodexUsage: Bool {
+    #if DEBUG
+    /// DEBUG mock：合成多个假账号，方便预览多列布局
+    private lazy var debugMockAccounts: [Account] = (0..<3).map { i in
+        Account(
+            id: UUID(uuidString: String(format: "DEB0000%d-0000-0000-0000-00000000000%d", i + 1, i + 1))!,
+            credentialToken: "mock-token-\(i + 1)",
+            accountIdentifier: "mock\(i + 1)",
+            accountName: "Mock \(i + 1)",
+            alias: nil,
+            createdAt: Date(),
+            provider: .codex
+        )
+    }
+    #endif
+
+    /// 本轮应拉取的 Codex 账号（启用 + 有凭据，顺序 = 配置顺序）
+    private var fetchableCodexAccounts: [Account] {
         #if DEBUG
         if shouldSuppressDebugCodexUsageForDisplayOptions {
-            return false
+            return []
         }
-        return settings.debugModeEnabled || settings.hasValidCodexCredentials
-        #else
-        return settings.hasValidCodexCredentials
+        if settings.debugModeEnabled {
+            return debugMockAccounts
+        }
         #endif
+        return settings.enabledCodexAccounts.filter { !$0.credentialToken.isEmpty }
+    }
+
+    private var shouldFetchCodexUsage: Bool {
+        !fetchableCodexAccounts.isEmpty
     }
 
     private var shouldFetchCursorUsage: Bool {
@@ -77,13 +100,31 @@ final class DataRefreshManager: ObservableObject {
         #endif
     }
 
+    /// 所有 Codex 账号均无可用数据（用于决定是否展示全局错误）
+    private var codexHasAnyUsage: Bool {
+        codexAccountUsages.contains { $0.usage != nil }
+    }
+
+    /// 副屏同步账号（勾选中的第一个）的用量
+    private var bluetoothCodexUsage: CodexUsageData? {
+        if let id = settings.bluetoothCodexAccount?.id {
+            return codexAccountUsages.first { $0.accountId == id }?.usage
+        }
+        return codexAccountUsages.first?.usage
+    }
+
+    /// 蓝牙副屏读取入口（设置开关即时推送用）
+    var bluetoothCodexDataForSync: CodexUsageData? { bluetoothCodexUsage }
+
     private enum TimerID {
         static let mainRefresh = "mainRefresh"
         static let popoverRefresh = "popoverRefresh"
-        static let codexResetVerify1 = "codexResetVerify1"
-        static let codexResetVerify2 = "codexResetVerify2"
-        static let codexResetVerify3 = "codexResetVerify3"
         static let codexTokenRefresh = "codexTokenRefresh"
+
+        /// 每账号一套重置验证定时器
+        static func codexResetVerify(_ accountId: UUID) -> [String] {
+            ["codexResetVerify1", "codexResetVerify2", "codexResetVerify3"].map { "\($0)_\(accountId.uuidString)" }
+        }
     }
 
     init() {
@@ -91,11 +132,11 @@ final class DataRefreshManager: ObservableObject {
     }
 
     func fetchUsage() {
-        let fetchCodex = shouldFetchCodexUsage
+        let codexAccountsToFetch = fetchableCodexAccounts
         let fetchCursor = shouldFetchCursorUsage
         let fetchAntigravity = shouldFetchAntigravityUsage
 
-        guard fetchCodex || fetchCursor || fetchAntigravity else {
+        guard !codexAccountsToFetch.isEmpty || fetchCursor || fetchAntigravity else {
             isLoading = false
             clearCodexUsageState()
             clearCursorUsageState()
@@ -108,10 +149,10 @@ final class DataRefreshManager: ObservableObject {
         isLoading = true
         errorMessage = nil
         lastAPIFetchTime = Date()
-        pendingFetches = (fetchCodex ? 1 : 0) + (fetchCursor ? 1 : 0) + (fetchAntigravity ? 1 : 0)
+        pendingFetches = codexAccountsToFetch.count + (fetchCursor ? 1 : 0) + (fetchAntigravity ? 1 : 0)
 
-        if fetchCodex {
-            fetchCodexUsage()
+        for account in codexAccountsToFetch {
+            fetchCodexUsage(account)
         }
         if fetchCursor {
             fetchCursorUsage()
@@ -121,19 +162,37 @@ final class DataRefreshManager: ObservableObject {
         }
     }
 
-    private func fetchCodexUsage() {
-        codexApiService.fetchUsage { [weak self] result in
+    private func codexApiService(for accountId: UUID) -> CodexAPIService {
+        if let service = codexApiServices[accountId] { return service }
+        let service = CodexAPIService(accountId: accountId)
+        codexApiServices[accountId] = service
+        return service
+    }
+
+    /// 停用/删除账号后清掉残留的实例、定时器与状态
+    private func pruneCodexApiServices() {
+        let validIds = Set(settings.codexAccounts.map(\.id))
+        for accountId in codexApiServices.keys where !validIds.contains(accountId) {
+            codexApiServices.removeValue(forKey: accountId)
+            lastCodexResetsAtByAccount.removeValue(forKey: accountId)
+            codexSessionExpiredNotifiedAccounts.remove(accountId)
+            timerManager.invalidate(TimerID.codexResetVerify(accountId))
+        }
+    }
+
+    private func fetchCodexUsage(_ account: Account) {
+        codexApiService(for: account.id).fetchUsage { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success(let data):
-                    self.processCodexSuccess(data)
+                    self.processCodexSuccess(data, account: account)
                 case .failure(let error):
                     if case UsageError.unauthorized = error {
-                        self.attemptTokenRefreshAndRetry()
+                        self.attemptTokenRefreshAndRetry(account)
                     } else {
-                        self.errorMessage = error.localizedDescription
-                        Logger.menuBar.info("Codex 请求失败: \(error.localizedDescription)")
+                        self.setCodexAccountError(account, error.localizedDescription)
+                        Logger.menuBar.info("Codex 请求失败(\(account.displayName, privacy: .public)): \(error.localizedDescription)")
                     }
                 }
                 self.noteFetchFinished()
@@ -153,7 +212,7 @@ final class DataRefreshManager: ObservableObject {
                         self.markCursorNeedsRelogin()
                     } else {
                         Logger.menuBar.info("Cursor 请求失败: \(error.localizedDescription)")
-                        if self.cursorUsageData == nil && self.codexUsageData == nil && self.antigravityUsageData == nil {
+                        if self.cursorUsageData == nil && !self.codexHasAnyUsage && self.antigravityUsageData == nil {
                             self.errorMessage = error.localizedDescription
                         }
                     }
@@ -178,7 +237,7 @@ final class DataRefreshManager: ObservableObject {
                         Logger.menuBar.info("Antigravity 无可用凭证")
                     } else {
                         Logger.menuBar.info("Antigravity 请求失败: \(error.localizedDescription)")
-                        if self.antigravityUsageData == nil && self.codexUsageData == nil && self.cursorUsageData == nil {
+                        if self.antigravityUsageData == nil && !self.codexHasAnyUsage && self.cursorUsageData == nil {
                             self.errorMessage = error.localizedDescription
                         }
                     }
@@ -200,7 +259,7 @@ final class DataRefreshManager: ObservableObject {
         let previous = cursorUsageData
         cursorUsageData = data
         cursorNeedsRelogin = false
-        if errorMessage == UsageError.sessionExpired.localizedDescription && !codexNeedsRelogin && !antigravityNeedsRelogin {
+        if errorMessage == UsageError.sessionExpired.localizedDescription && !codexNeedsReloginState {
             errorMessage = nil
         }
 
@@ -218,7 +277,7 @@ final class DataRefreshManager: ObservableObject {
     private func processAntigravitySuccess(_ data: AntigravityUsageData) {
         antigravityUsageData = data
         antigravityNeedsRelogin = false
-        if errorMessage == UsageError.sessionExpired.localizedDescription && !codexNeedsRelogin && !cursorNeedsRelogin {
+        if errorMessage == UsageError.sessionExpired.localizedDescription && !codexNeedsReloginState {
             errorMessage = nil
         }
 
@@ -232,7 +291,7 @@ final class DataRefreshManager: ObservableObject {
     /// processXxxSuccess 都在主线程回调，这里同步捕获数据后 hop 到 MainActor 构造
     private func pushBluetoothSync() {
         guard settings.bluetoothSyncEnabled else { return }
-        let codex = codexUsageData
+        let codex = bluetoothCodexUsage
         let cursor = cursorUsageData
         let antigravity = antigravityUsageData
         Task { @MainActor in
@@ -251,7 +310,9 @@ final class DataRefreshManager: ObservableObject {
 
     private func publishSmartMonitoringUtilizations() {
         var utilizations: [ProviderType: Double] = [:]
-        if let codex = codexUsageData, let value = monitoringUtilization(for: codex) {
+        // 多账号取最大用量（告急优先），节奏仍按平台一个键
+        let codexValues = codexAccountUsages.compactMap { $0.usage }.compactMap { monitoringUtilization(for: $0) }
+        if let value = codexValues.max() {
             utilizations[.codex] = value
         }
         if let value = cursorUsageData?.included?.percentage {
@@ -294,7 +355,7 @@ final class DataRefreshManager: ObservableObject {
                 NotificationManager.shared.sendCursorSessionExpiredNotification()
             }
         }
-        if codexUsageData == nil && antigravityUsageData == nil {
+        if !codexHasAnyUsage && antigravityUsageData == nil {
             errorMessage = UsageError.sessionExpired.localizedDescription
         }
         clearCursorUsageState()
@@ -307,19 +368,48 @@ final class DataRefreshManager: ObservableObject {
             antigravitySessionExpiredNotified = true
             Logger.menuBar.notice("Antigravity 会话失效，需要重新登录 Antigravity 客户端")
         }
-        if codexUsageData == nil && cursorUsageData == nil {
+        if !codexHasAnyUsage && cursorUsageData == nil {
             errorMessage = UsageError.sessionExpired.localizedDescription
         }
         clearAntigravityUsageState()
     }
 
+    // MARK: - Codex 多账号状态
+
+    /// 是否有任一 Codex 账号处于需重登录状态
+    private var codexNeedsReloginState: Bool {
+        codexAccountUsages.contains { $0.needsRelogin }
+    }
+
+    private func upsertCodexUsage(_ entry: CodexAccountUsage, account: Account) {
+        var map = Dictionary(uniqueKeysWithValues: codexAccountUsages.map { ($0.accountId, $0) })
+        map[account.id] = entry
+        // 顺序 = 启用账号（可拉取）顺序；已不在列表的残留项丢弃
+        let order = fetchableCodexAccounts.map(\.id)
+        codexAccountUsages = order.compactMap { map[$0] }
+    }
+
+    private func setCodexAccountError(_ account: Account, _ message: String) {
+        var entry = codexAccountUsages.first { $0.accountId == account.id }
+            ?? CodexAccountUsage(accountId: account.id, displayName: account.displayName)
+        entry.errorMessage = message
+        upsertCodexUsage(entry, account: account)
+        // 单账号网络瞬断不打扰；全部账号都无数据才写全局错误
+        if !codexHasAnyUsage && cursorUsageData == nil && antigravityUsageData == nil {
+            errorMessage = message
+        }
+    }
+
     private func clearCodexUsageState(clearError: Bool = true) {
-        codexUsageData = nil
+        codexAccountUsages = []
         if clearError {
             errorMessage = nil
         }
-        lastCodexResetsAt = nil
-        cancelCodexResetVerification()
+        lastCodexResetsAtByAccount.removeAll()
+        for accountId in Set(codexApiServices.keys).union(codexSessionExpiredNotifiedAccounts) {
+            timerManager.invalidate(TimerID.codexResetVerify(accountId))
+        }
+        codexSessionExpiredNotifiedAccounts.removeAll()
     }
 
     private func monitoringUtilization(for codex: CodexUsageData) -> Double? {
@@ -379,7 +469,8 @@ final class DataRefreshManager: ObservableObject {
 
     private func startCodexTokenRefreshTimer() {
         timerManager.schedule(TimerID.codexTokenRefresh, interval: 10 * 60, repeats: true) { [weak self] in
-            self?.codexApiService.proactivelyRefreshIfNeeded()
+            // 逐账号主动续期
+            self?.codexApiServices.values.forEach { $0.proactivelyRefreshIfNeeded() }
         }
     }
 
@@ -449,9 +540,10 @@ final class DataRefreshManager: ObservableObject {
 
         lastManualRefreshTime = now
         refreshAnimationStartTime = now
-        let fetchCount = [shouldFetchCodexUsage, shouldFetchCursorUsage, shouldFetchAntigravityUsage]
-            .filter { $0 }
-            .count
+        // 多账号/多平台一起刷时全部图标同转（refreshingProvider = nil）；单一目标时只转该平台
+        let fetchCount = fetchableCodexAccounts.count
+            + (shouldFetchCursorUsage ? 1 : 0)
+            + (shouldFetchAntigravityUsage ? 1 : 0)
         if fetchCount >= 2 {
             refreshState.refreshingProvider = nil
         } else if shouldFetchAntigravityUsage {
@@ -474,110 +566,137 @@ final class DataRefreshManager: ObservableObject {
         fetchUsage()
     }
 
-    private func processCodexSuccess(_ data: CodexUsageData) {
-        let previousData = codexUsageData
-        codexUsageData = data
-        errorMessage = nil
+    private func processCodexSuccess(_ data: CodexUsageData, account: Account) {
+        let previousData = codexAccountUsages.first { $0.accountId == account.id }?.usage
+        upsertCodexUsage(
+            CodexAccountUsage(
+                accountId: account.id,
+                displayName: account.displayName,
+                usage: data,
+                needsRelogin: false,
+                errorMessage: nil
+            ),
+            account: account
+        )
+        if errorMessage == UsageError.sessionExpired.localizedDescription && !codexNeedsReloginState {
+            errorMessage = nil
+        }
 
         publishSmartMonitoringUtilizations()
 
         if settings.notificationsEnabled {
-            NotificationManager.shared.checkAndNotify(codexUsageData: data, previousData: previousData)
+            NotificationManager.shared.checkAndNotify(codexUsageData: data, previousData: previousData, account: account)
         }
 
         let newCodexResetsAt = data.primary?.resetsAt
-        if hasResetTimeChanged(from: lastCodexResetsAt, to: newCodexResetsAt) {
-            cancelCodexResetVerification()
+        if hasResetTimeChanged(from: lastCodexResetsAtByAccount[account.id], to: newCodexResetsAt) {
+            cancelCodexResetVerification(accountId: account.id)
         } else if let resetsAt = newCodexResetsAt {
-            scheduleCodexResetVerification(resetsAt: resetsAt)
+            scheduleCodexResetVerification(resetsAt: resetsAt, accountId: account.id)
         }
-        lastCodexResetsAt = newCodexResetsAt
+        lastCodexResetsAtByAccount[account.id] = newCodexResetsAt
 
         pushBluetoothSync()
     }
 
-    private func attemptTokenRefreshAndRetry() {
-        guard !codexNeedsRelogin else {
-            markCodexNeedsRelogin()
+    private func attemptTokenRefreshAndRetry(_ account: Account) {
+        let alreadyMarked = codexAccountUsages.first { $0.accountId == account.id }?.needsRelogin ?? false
+        guard !alreadyMarked else {
+            markCodexNeedsRelogin(account)
             return
         }
 
-        if CodexAPIService.isOAuthRefreshToken(settings.codexSessionToken) {
-            markCodexNeedsRelogin()
+        if CodexAPIService.isOAuthRefreshToken(settings.codexAccountToken(account.id)) {
+            markCodexNeedsRelogin(account)
             return
         }
 
-        Logger.menuBar.info("Codex accessToken 已过期，启动刷新链")
-        attemptLevel1SSRRefresh()
+        Logger.menuBar.info("Codex accessToken 已过期，启动刷新链(\(account.displayName, privacy: .public))")
+        attemptLevel1SSRRefresh(account)
     }
 
-    private func attemptLevel1SSRRefresh() {
+    private func attemptLevel1SSRRefresh(_ account: Account) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            CodexTokenRefreshCoordinator.shared.refresh { [weak self] result in
+            CodexTokenRefreshCoordinator.shared.refresh(accountId: account.id) { [weak self] result in
                 guard let self else { return }
                 switch result {
                 case .success(let freshAccessToken):
-                    self.retryCodexWithAccessToken(freshAccessToken)
+                    self.retryCodexWithAccessToken(freshAccessToken, account: account)
                 case .failure:
-                    self.attemptLevel2WebViewRefresh()
+                    self.attemptLevel2WebViewRefresh(account)
                 }
             }
         }
     }
 
-    private func attemptLevel2WebViewRefresh() {
+    private func attemptLevel2WebViewRefresh(_ account: Account) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            CodexSilentRefreshCoordinator.shared.refresh { [weak self] result in
+            CodexSilentRefreshCoordinator.shared.refresh(accountId: account.id) { [weak self] result in
                 guard let self else { return }
                 switch result {
                 case .success:
-                    self.fetchUsage()
+                    self.fetchCodexUsage(account)
                 case .failure:
-                    self.markCodexNeedsRelogin()
+                    self.markCodexNeedsRelogin(account)
                 }
             }
         }
     }
 
-    private func retryCodexWithAccessToken(_ accessToken: String) {
+    private func retryCodexWithAccessToken(_ accessToken: String, account: Account) {
         isLoading = true
-        codexApiService.fetchUsageWithAccessToken(accessToken) { [weak self] usageResult in
+        codexApiService(for: account.id).fetchUsageWithAccessToken(accessToken) { [weak self] usageResult in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isLoading = false
                 switch usageResult {
                 case .success(let data):
-                    self.processCodexSuccess(data)
+                    self.processCodexSuccess(data, account: account)
                 case .failure:
-                    self.attemptLevel2WebViewRefresh()
+                    self.attemptLevel2WebViewRefresh(account)
                 }
             }
         }
     }
 
     private func resetCodexReloginState() {
-        codexNeedsRelogin = false
-        codexSessionExpiredNotified = false
+        codexAccountUsages = codexAccountUsages.map { entry in
+            var entry = entry
+            entry.needsRelogin = false
+            return entry
+        }
+        codexSessionExpiredNotifiedAccounts.removeAll()
     }
 
-    private func markCodexNeedsRelogin() {
-        codexNeedsRelogin = true
-        if !codexSessionExpiredNotified {
-            codexSessionExpiredNotified = true
+    /// 单账号过期：只标记该账号，其他账号照常刷新
+    private func markCodexNeedsRelogin(_ account: Account) {
+        var entry = codexAccountUsages.first { $0.accountId == account.id }
+            ?? CodexAccountUsage(accountId: account.id, displayName: account.displayName)
+        entry.needsRelogin = true
+        entry.usage = nil
+        upsertCodexUsage(entry, account: account)
+        if !codexSessionExpiredNotifiedAccounts.contains(account.id) {
+            codexSessionExpiredNotifiedAccounts.insert(account.id)
             if settings.notificationsEnabled {
-                NotificationManager.shared.sendCodexSessionExpiredNotification()
+                NotificationManager.shared.sendCodexSessionExpiredNotification(accountLabel: account.displayName)
             }
         }
-        errorMessage = UsageError.sessionExpired.localizedDescription
-        clearCodexUsageState(clearError: false)
+        if !codexHasAnyUsage && cursorUsageData == nil && antigravityUsageData == nil {
+            errorMessage = UsageError.sessionExpired.localizedDescription
+        }
+        cancelCodexResetVerification(accountId: account.id)
+        lastCodexResetsAtByAccount.removeValue(forKey: account.id)
     }
 
     func handleAccountChanged(provider: ProviderType?) {
         if provider == nil || provider == .codex {
             resetCodexReloginState()
-            codexApiService.clearAccessTokenCache()
+            for service in codexApiServices.values {
+                service.clearAccessTokenCache()
+            }
+            pruneCodexApiServices()
             clearCodexUsageState()
         }
         if provider == nil || provider == .cursor {
@@ -630,25 +749,25 @@ final class DataRefreshManager: ObservableObject {
         return false
     }
 
-    private func cancelCodexResetVerification() {
-        timerManager.invalidate(TimerID.codexResetVerify1)
-        timerManager.invalidate(TimerID.codexResetVerify2)
-        timerManager.invalidate(TimerID.codexResetVerify3)
+    private func cancelCodexResetVerification(accountId: UUID) {
+        timerManager.invalidate(TimerID.codexResetVerify(accountId))
     }
 
-    private func scheduleCodexResetVerification(resetsAt: Date) {
-        cancelCodexResetVerification()
+    private func scheduleCodexResetVerification(resetsAt: Date, accountId: UUID) {
+        cancelCodexResetVerification(accountId: accountId)
         let timeUntilReset = resetsAt.timeIntervalSinceNow
         guard timeUntilReset > 0 else { return }
 
-        timerManager.schedule(TimerID.codexResetVerify1, interval: timeUntilReset + 1, repeats: false) { [weak self] in
-            self?.fetchUsage()
-        }
-        timerManager.schedule(TimerID.codexResetVerify2, interval: timeUntilReset + 10, repeats: false) { [weak self] in
-            self?.fetchUsage()
-        }
-        timerManager.schedule(TimerID.codexResetVerify3, interval: timeUntilReset + 30, repeats: false) { [weak self] in
-            self?.fetchUsage()
+        let timerIds = TimerID.codexResetVerify(accountId)
+        for (index, timerId) in timerIds.enumerated() {
+            let offsets: [TimeInterval] = [1, 10, 30]
+            timerManager.schedule(timerId, interval: timeUntilReset + offsets[index], repeats: false) { [weak self] in
+                // 重置验证只刷新该账号
+                guard let self else { return }
+                if let account = self.fetchableCodexAccounts.first(where: { $0.id == accountId }) {
+                    self.fetchCodexUsage(account)
+                }
+            }
         }
     }
 
@@ -656,6 +775,9 @@ final class DataRefreshManager: ObservableObject {
         timerManager.invalidateAll()
         endRefreshActivity()
         antigravityApiService.cancelAllRequests()
+        for service in codexApiServices.values {
+            service.cancelAllRequests()
+        }
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
             self.wakeObserver = nil
