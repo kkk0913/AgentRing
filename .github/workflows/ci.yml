@@ -54,5 +54,8 @@ jobs:
       - name: Validate ring display logic
         run: bash Scripts/test-ring-display.sh
 
+      - name: Validate multi-account planning
+        run: bash Scripts/test-multi-account-planning.sh
+
       - name: Validate Sparkle delegate integration
         run: bash Scripts/test-update-manager.sh "$RUNNER_TEMP/SourcePackages/artifacts/sparkle/Sparkle"

@@ -40,3 +40,6 @@ Package.resolved
 *~
 build-temp/
 
+
+# Local build cache redirect (sandbox workaround)
+.xcode-home/
