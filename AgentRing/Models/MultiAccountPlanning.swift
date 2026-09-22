@@ -4,7 +4,6 @@
 //
 
 import Foundation
-import CoreGraphics
 
 /// 多账号展示/同步的纯决策逻辑（顺序、启停过滤、折行），供 UI、菜单栏、副屏共用。
 /// 仅依赖 Foundation，可被 Tests 直接拼接执行（见 Scripts/test-multi-account-planning.sh）。
@@ -21,8 +20,14 @@ enum MultiAccountPlanning {
             case antigravity
             case antigravityThird
         }
-
         let source: Source
+
+        // 编译器要求的最小补充：checks 中数组字面量 [.codexAccount(a), ...] 按 [DisplayUnit]
+        // 隐式成员表达式解析，而 case 在嵌套 Source 上，故补同名静态成员供其构造。
+        static func codexAccount(_ accountId: UUID) -> DisplayUnit { DisplayUnit(source: .codexAccount(accountId)) }
+        static var cursor: DisplayUnit { DisplayUnit(source: .cursor) }
+        static var antigravity: DisplayUnit { DisplayUnit(source: .antigravity) }
+        static var antigravityThird: DisplayUnit { DisplayUnit(source: .antigravityThird) }
     }
 
     /// 启用的 Codex 账号 id，顺序 = 配置顺序（disabledIDs 中的被过滤）
@@ -42,13 +47,9 @@ enum MultiAccountPlanning {
         hasCursor: Bool,
         hasAntigravity: Bool
     ) -> [DisplayUnit] {
-        var units: [DisplayUnit] = enabledAccountIDs(
-            accountIDs: codexAccountIDs,
-            disabledIDs: disabledCodexIDs
-        ).map { DisplayUnit(source: .codexAccount($0)) }
-        if hasCursor {
-            units.append(DisplayUnit(source: .cursor))
-        }
+        var units: [DisplayUnit] = enabledAccountIDs(accountIDs: codexAccountIDs, disabledIDs: disabledCodexIDs)
+            .map { DisplayUnit(source: .codexAccount($0)) }
+        if hasCursor { units.append(DisplayUnit(source: .cursor)) }
         if hasAntigravity {
             units.append(DisplayUnit(source: .antigravity))
             units.append(DisplayUnit(source: .antigravityThird))

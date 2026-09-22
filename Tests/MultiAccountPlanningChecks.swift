@@ -53,22 +53,22 @@ check(MultiAccountPlanning.rowWidths(unitCount: 8) == [4, 4], "8 units two even 
 check(MultiAccountPlanning.rowWidths(unitCount: 0) == [], "0 units no rows")
 
 // 5. 展示单元顺序：Codex 账号（配置顺序）→ Cursor → Antigravity 两个
-let units: [MultiAccountPlanning.DisplayUnit] = MultiAccountPlanning.displayUnits(
+let units = MultiAccountPlanning.displayUnits(
     codexAccountIDs: [a, b],
     disabledCodexIDs: [],
     hasCursor: true,
     hasAntigravity: true
 )
 check(
-    units.map(\.source) == [.codexAccount(a), .codexAccount(b), .cursor, .antigravity, .antigravityThird],
+    units == [.codexAccount(a), .codexAccount(b), .cursor, .antigravity, .antigravityThird],
     "display units: codex accounts in order then other providers"
 )
 
 // 6. 展示单元：禁用账号不出现在展示单元里
-let units2: [MultiAccountPlanning.DisplayUnit] = MultiAccountPlanning.displayUnits(
+let units2 = MultiAccountPlanning.displayUnits(
     codexAccountIDs: [a, b],
     disabledCodexIDs: [a],
     hasCursor: false,
     hasAntigravity: false
 )
-check(units2.map(\.source) == [.codexAccount(b)], "disabled account excluded from display units")
+check(units2 == [.codexAccount(b)], "disabled account excluded from display units")
