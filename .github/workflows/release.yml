@@ -5,6 +5,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: ["release-preview/**"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -35,7 +36,7 @@ jobs:
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           EXPECTED_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          DRY_RUN: ${{ github.ref_type != 'tag' || inputs.dry_run }}
         run: |
           set -euo pipefail
           xcodebuild -version
