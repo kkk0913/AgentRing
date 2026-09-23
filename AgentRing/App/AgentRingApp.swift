@@ -15,6 +15,14 @@ struct AgentRingApp: App {
         Settings {
             EmptyView()
         }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(L.Menu.generalSettings) {
+                    AppDelegate.shared?.menuBarManager?.openSettings()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
     }
 }
 
@@ -51,6 +59,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// 应用启动完成时调用
     /// 初始化菜单栏管理器，根据是否首次启动显示欢迎窗口或开始刷新数据
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        // Isolated UI review: build with a preview bundle ID; no menu polling or login prompts.
+        if ProcessInfo.processInfo.arguments.contains("--preview-auth") {
+            NSApp.setActivationPolicy(.regular)
+            welcomeWindow = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(initialTab: 1)))
+            welcomeWindow?.title = "AgentRing · UI Preview"
+            welcomeWindow?.styleMask = [.titled, .closable, .resizable]
+            welcomeWindow?.setContentSize(NSSize(width: 760, height: 640))
+            welcomeWindow?.center()
+            welcomeWindow?.makeKeyAndOrderFront(nil)
+            welcomeWindow?.makeFirstResponder(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        #endif
         NSApp.setActivationPolicy(.accessory)
 
         // 请求通知权限

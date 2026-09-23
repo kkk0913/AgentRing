@@ -19,17 +19,17 @@ xcodebuild -resolvePackageDependencies \
   -clonedSourcePackagesDirPath /tmp/AgentRingSourcePackages
 
 SPARKLE_TOOLS=/tmp/AgentRingSourcePackages/artifacts/sparkle/Sparkle/bin
-"$SPARKLE_TOOLS/generate_keys" --account app.agentring.AgentRing
-SPARKLE_PUBLIC_KEY=$("$SPARKLE_TOOLS/generate_keys" --account app.agentring.AgentRing -p)
+"$SPARKLE_TOOLS/generate_keys" --account kkk0913.AgentRing
+SPARKLE_PUBLIC_KEY=$("$SPARKLE_TOOLS/generate_keys" --account kkk0913.AgentRing -p)
 ```
 
-私钥保存在当前用户的 macOS Keychain，账号名称为 `app.agentring.AgentRing`。如果已有该账号的密钥，命令会复用它。不要每次发布重新生成密钥。不要使用测试脚本生成的临时密钥发布。
+私钥保存在当前用户的 macOS Keychain，账号名称为 `kkk0913.AgentRing`。如果已有该账号的密钥，命令会复用它。不要每次发布重新生成密钥。不要使用测试脚本生成的临时密钥发布。
 
 导出到新建的私有临时目录，供下一步上传。不要粘贴私钥到聊天、日志或 Git：
 
 ```bash
 SPARKLE_EXPORT_DIR=$(mktemp -d)
-"$SPARKLE_TOOLS/generate_keys" --account app.agentring.AgentRing \
+"$SPARKLE_TOOLS/generate_keys" --account kkk0913.AgentRing \
   -x "$SPARKLE_EXPORT_DIR/private.key"
 chmod 600 "$SPARKLE_EXPORT_DIR/private.key"
 ```
@@ -38,12 +38,12 @@ chmod 600 "$SPARKLE_EXPORT_DIR/private.key"
 
 ### 2. 配置 GitHub Actions（一次性）
 
-先确保 `gh auth status` 显示有 `haorui-lab/agentRing` 的配置权限，再执行：
+先确保 `gh auth status` 显示有 `kkk0913/AgentRing` 的配置权限，再执行：
 
 ```bash
-gh secret set SPARKLE_PRIVATE_KEY --repo haorui-lab/agentRing \
+gh secret set SPARKLE_PRIVATE_KEY --repo kkk0913/AgentRing \
   < "$SPARKLE_EXPORT_DIR/private.key"
-gh variable set SPARKLE_PUBLIC_ED_KEY --repo haorui-lab/agentRing \
+gh variable set SPARKLE_PUBLIC_ED_KEY --repo kkk0913/AgentRing \
   --body "$SPARKLE_PUBLIC_KEY"
 ```
 
@@ -69,13 +69,13 @@ rmdir "$SPARKLE_EXPORT_DIR"
 
 ### 4. 发布首个 Sparkle 版本
 
-当前最新公开版为 v0.1.5（实施时核对）；第一个 Sparkle 版本必须使用更高的版本号，建议发布 v0.1.6。以实际最新版本为准，不要覆盖已存在的 tag 或正式 Release。
+本仓库首次发布计划为 v0.2.0。首次发布允许没有历史 Release；后续版本必须严格递增。不要覆盖已存在的 tag 或正式 Release。
 
 ```bash
-bash Scripts/set-version.sh 0.1.6
+bash Scripts/set-version.sh 0.2.0
 # 审阅、提交并推送包括版本号在内的改动后：
-git tag v0.1.6
-git push origin v0.1.6
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 工作流会执行：构建 universal App → 嵌套 ad-hoc 签名 → 校验两个版本字段和公钥 → 打包 DMG → 签署更新包和 appcast → 验证最终 DMG → 上传草稿附件 → 公开 Release。
@@ -85,7 +85,7 @@ git push origin v0.1.6
 固定 feed URL：
 
 ```text
-https://github.com/haorui-lab/agentRing/releases/latest/download/appcast.xml
+https://github.com/kkk0913/AgentRing/releases/latest/download/appcast.xml
 ```
 
 工作流先在草稿上传完整附件，最后才公开，避免 latest 指向不完整的 feed。它拒绝覆盖已公开 Release、拒绝降低 latest 版本，并使用当前密钥验证上一版已签名 feed，防止意外换钥。首次从无 appcast 的旧版迁移时跳过上一版 feed 验签。

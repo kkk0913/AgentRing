@@ -109,6 +109,7 @@ enum BluetoothPayloadBuilder {
         var providers: [BluetoothSyncPayload.ProviderPayload] = []
         for provider in ordered {
             switch provider {
+            case .kimi, .glm: break // Companion protocol currently supports the original providers only.
             case .codex:
                 if let payload = codexProvider(from: codexUsageData) {
                     providers.append(payload)

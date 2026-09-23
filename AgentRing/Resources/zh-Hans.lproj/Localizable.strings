@@ -49,7 +49,7 @@
 
 // MARK: - Settings - Tabs
 "settings.tab.general" = "通用";
-"settings.tab.auth" = "认证";
+"settings.tab.auth" = "账号";
 "settings.tab.bluetooth" = "蓝牙副屏";
 "settings.tab.about" = "关于";
 
@@ -74,6 +74,10 @@
 "settings.general.usage_display_section" = "用量展示模式";
 "settings.general.usage_display_hint_remaining" = "优先展示可用剩余额度及剩余时间";
 "settings.general.usage_display_hint_used" = "优先展示已用额度及重置时间";
+"settings.general.menubar_codex_accounts" = "菜单栏账号";
+"settings.general.menubar_codex_all" = "显示全部";
+"settings.general.menubar_codex_first" = "每个平台的首个";
+"settings.general.menubar_codex_hint" = "适用于 Codex 和 Cursor；各平台的首个已启用账号由账号页排序决定。弹窗仍显示全部已启用账号。";
 "settings.general.reset_button" = "恢复默认设置";
 "icon_style.color_translucent" = "彩色通透";
 "icon_style.color_with_background" = "彩色背景";
@@ -490,5 +494,59 @@
 
 "account.multi_hint" = "勾选的账户参与用量展示与刷新；副屏同步勾选中的第一个账户";
 "account.enable_account" = "启用此账户";
+"account.move_up" = "上移";
+"account.move_down" = "下移";
+"account.details" = "展开或收起账号详情";
+"account.select" = "切换到此账号";
 "bluetooth.sync_account" = "当前同步账号：%@（勾选中的第一个）";
 "bluetooth.sync_account_none" = "无可用账号";
+
+"account.reorder" = "调整账号顺序";
+
+"usage.previous_page" = "上一页";
+"usage.next_page" = "下一页";
+
+// Platform configuration and plan quota
+"providers.platforms" = "平台";
+"providers.monitor" = "监测";
+"providers.selection_hint" = "勾选以监测，点击名称配置。关闭后保留账号与凭据。";
+"providers.configure_first" = "请先在认证设置中配置此平台。";
+"providers.region" = "服务区域";
+"providers.region.cn" = "智谱 · 中国";
+"providers.kimi.hint" = "填写对应区域的 Kimi Code 套餐 API Key，直接查询额度。无需运行 Kimi CLI 或本地服务。";
+"providers.glm.hint" = "使用对应区域的 GLM Coding Plan API Key。此处查询套餐额度。";
+"providers.kimi.token" = "Kimi Code API Key";
+"providers.glm.token" = "Coding Plan API Key";
+"providers.secret.placeholder" = "输入凭据";
+"providers.validate_enable" = "验证并启用";
+"providers.connected" = "连接成功，已保存并启用监测。";
+"providers.setup_guide" = "查看官方配置说明";
+"providers.remove" = "移除配置";
+"providers.remove_hint" = "删除本地保存的此平台凭据并关闭监测。";
+"providers.encrypted" = "凭据加密保存在本机。";
+"providers.error.credentials" = "凭据无效或已失效，请检查后重试。";
+"providers.error.configuration" = "配置无效，请检查服务区域。";
+"providers.error.response" = "无法识别用量响应，请检查服务版本。";
+"providers.error.empty" = "没有可用的套餐额度数据，请确认套餐和登录状态。";
+"providers.error.service" = "服务未能返回用量，请检查登录状态后重试。";
+"providers.error.http" = "用量查询失败";
+"providers.error.save" = "凭据保存失败，请重试。";
+"providers.quota.month" = "月度总量";
+"providers.quota.code_month" = "月度编程";
+"providers.quota.tokens" = "模型额度";
+"providers.quota.mcp" = "MCP 月度";
+"providers.quota.no_reset" = "平台未提供重置时间";
+"providers.quota.resets" = "重置时间";
+"providers.updated" = "更新于";
+"providers.configure_platforms" = "配置所有平台";
+
+"providers.kimi.migration" = "此配置使用旧的本地服务令牌。请重新填写 Kimi Code API Key 并验证。";
+
+"providers.kimi.region.cn" = "中国 · kimi.com";
+
+"providers.kimi.region.global" = "国际 · kimi.ai";
+
+"providers.kimi.get_key" = "获取 Kimi Code API Key";
+
+"providers.refresh.failed" = "刷新失败";
+"providers.refresh.cached" = "旧数据 · 上次成功更新";

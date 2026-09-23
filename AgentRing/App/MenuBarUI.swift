@@ -76,6 +76,8 @@ final class MenuBarUI {
         DispatchQueue.main.async { [weak self, weak popoverWindow] in
             guard let self, let popoverWindow else { return }
             self.adjustPopoverWindowPosition(popoverWindow)
+            // Start without highlighting an arbitrary control; Tab can still enter the key-view loop.
+            popoverWindow.makeFirstResponder(nil)
         }
 
         #if DEBUG
@@ -100,10 +102,9 @@ final class MenuBarUI {
         guard let screen else { return }
         var frame = popoverWindow.frame
         let maxAllowedX = screen.visibleFrame.maxX - frame.width - edgeMargin
-        if frame.origin.x > maxAllowedX {
-            frame.origin.x = maxAllowedX
-            popoverWindow.setFrame(frame, display: true)
-        }
+        frame.origin.x = max(screen.visibleFrame.minX + edgeMargin, min(frame.origin.x, maxAllowedX))
+        frame.origin.y = max(screen.visibleFrame.minY + edgeMargin, frame.origin.y)
+        popoverWindow.setFrame(frame, display: true)
     }
 
     func closePopover() {
@@ -159,14 +160,7 @@ final class MenuBarUI {
 
         // Codex 多账号同显，无需切换子菜单；账号启停与排序在认证设置页
 
-        if settings.cursorAccounts.count > 1 {
-            let cursorSubmenu = createAccountSubmenu(accounts: settings.cursorAccounts, currentId: settings.currentCursorAccountId, selector: #selector(MenuBarManager.switchCursorAccount(_:)), target: target)
-            let currentName = settings.currentCursorAccount?.displayName ?? "Cursor"
-            let item = NSMenuItem(title: "Cursor: \(currentName)", action: nil, keyEquivalent: "")
-            item.submenu = cursorSubmenu
-            setMenuItemIcon(item, systemName: "person.2.fill")
-            menu.addItem(item)
-        }
+
 
         if settings.cursorAccounts.count > 1 {
             menu.addItem(.separator())
@@ -251,6 +245,8 @@ final class MenuBarUI {
         codexAccountUsages: [CodexAccountUsage],
         cursorUsageData: CursorUsageData?,
         antigravityUsageData: AntigravityUsageData? = nil,
+        cursorAccountUsages: [CursorAccountUsage] = [],
+        planQuotaStates: [ProviderType: PlanQuotaState] = [:],
         hasUpdate: Bool = false,
         shouldShowBadge: Bool = false
     ) {
@@ -261,11 +257,32 @@ final class MenuBarUI {
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData
         )
+        if !cursorAccountUsages.isEmpty {
+            var names = codexAccountUsages.map { "Codex · " + $0.displayName }
+            names += cursorAccountUsages.map { entry in
+                var text = "Cursor · " + entry.displayName
+                if let error = entry.errorMessage {
+                    text += " — " + L.provider("refresh.failed") + ": " + error
+                    if let updated = entry.lastUpdatedAt { text += " (" + L.provider("refresh.cached") + " " + updated.formatted() + ")" }
+                } else if entry.usage == nil { text += " — " + L.Usage.loading }
+                return text
+            }
+            if antigravityUsageData != nil { names.append("Antigravity") }
+            button.toolTip = names.joined(separator: "\n")
+        }
+        let planTips = settings.providerOrder.compactMap { provider -> String? in
+            guard settings.isProviderEnabled(provider), let state = planQuotaStates[provider] else { return nil }
+            if let quota = state.quota {
+                return provider.displayName + ": " + quota.windows.map { $0.title + " " + UsageRingDisplay.percentLabel(usedPercentage: $0.usedPercentage, showRemainingMode: settings.showRemainingMode) }.joined(separator: ", ")
+            }
+            return provider.displayName + ": " + (state.error ?? L.Usage.loading)
+        }
+        if !planTips.isEmpty { button.toolTip = ([button.toolTip ?? ""] + planTips).joined(separator: "\n") }
         let cacheKey = generateCacheKey(
             codexAccountUsages: codexAccountUsages,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData
-        )
+        ) + String(reflecting: codexAccountUsages) + String(reflecting: cursorAccountUsages) + String(reflecting: planQuotaStates)
 
         if let cachedImage = iconCache[cacheKey] {
             button.image = cachedImage
@@ -276,6 +293,8 @@ final class MenuBarUI {
             codexAccountUsages: codexAccountUsages,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData,
+            cursorAccountUsages: cursorAccountUsages,
+            planQuotaStates: planQuotaStates,
             button: button
         )
         if iconCache.count >= maxCacheSize {
@@ -299,7 +318,10 @@ final class MenuBarUI {
     ) -> String {
         var lines: [String] = []
         for entry in codexAccountUsages {
-            guard let usage = entry.usage else { continue }
+            guard let usage = entry.usage else {
+                lines.append(entry.displayName + " — " + (entry.needsRelogin ? L.Error.sessionExpired : entry.errorMessage ?? L.Usage.loading))
+                continue
+            }
             let pct = [
                 usage.primary?.percentage,
                 usage.secondary?.percentage,

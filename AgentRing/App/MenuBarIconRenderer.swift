@@ -20,6 +20,8 @@ final class MenuBarIconRenderer {
         codexAccountUsages: [CodexAccountUsage],
         cursorUsageData: CursorUsageData?,
         antigravityUsageData: AntigravityUsageData? = nil,
+        cursorAccountUsages: [CursorAccountUsage] = [],
+        planQuotaStates: [ProviderType: PlanQuotaState] = [:],
         hasUpdate: Bool = false,
         button: NSStatusBarButton?
     ) -> NSImage {
@@ -28,6 +30,8 @@ final class MenuBarIconRenderer {
             codexAccountUsages: codexAccountUsages,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData,
+            cursorAccountUsages: cursorAccountUsages,
+            planQuotaStates: planQuotaStates,
             isMonochrome: isMonochrome,
             button: button
         )
@@ -37,11 +41,20 @@ final class MenuBarIconRenderer {
         codexAccountUsages: [CodexAccountUsage],
         cursorUsageData: CursorUsageData?,
         antigravityUsageData: AntigravityUsageData? = nil,
+        cursorAccountUsages: [CursorAccountUsage] = [],
+        planQuotaStates: [ProviderType: PlanQuotaState] = [:],
         isMonochrome: Bool,
         button: NSStatusBarButton?
     ) -> NSImage {
-        let showingCodex = !codexAccountUsages.isEmpty
-        let showingCursor = cursorUsageData != nil
+        let menuBarCodexUsages = settings.menuBarCodexDisplayMode == .first
+            ? Array(codexAccountUsages.prefix(1))
+            : codexAccountUsages
+        let cursorEntries = settings.menuBarCodexDisplayMode == .first ? Array(cursorAccountUsages.prefix(1)) : cursorAccountUsages
+        let cursorSlots = cursorAccountUsages.isEmpty
+            ? cursorUsageData.map { [CursorAccountUsage(accountId: UUID(), displayName: "Cursor", usage: $0)] } ?? []
+            : cursorEntries
+        let showingCodex = !menuBarCodexUsages.isEmpty
+        let showingCursor = !cursorSlots.isEmpty
         let showingAntigravity = antigravityUsageData != nil
         let ordered = settings.orderedActiveProviders(
             hasCodexData: showingCodex,
@@ -49,7 +62,7 @@ final class MenuBarIconRenderer {
             antigravityUsageData: antigravityUsageData
         )
         // 多账号也算多单元：每账号一组圆环簇横排，品牌 logo 不随账号重复
-        let showingMultiple = PopoverLayout.unitCount(providers: ordered, codexAccountCount: codexAccountUsages.count) > 1
+        let showingMultiple = PopoverLayout.unitCount(providers: ordered, codexAccountCount: menuBarCodexUsages.count, cursorAccountCount: cursorEntries.count) > 1
 
         switch settings.iconDisplayMode {
         case .none:
@@ -74,14 +87,25 @@ final class MenuBarIconRenderer {
 
             for provider in ordered {
                 switch provider {
+                case .kimi, .glm:
+                    if includeBrand, let brand = createProviderBrandIcon(provider: provider, isMonochrome: isMonochrome, size: providerBrandIconSize) { icons.append(brand) }
+                    if let windows = planQuotaStates[provider]?.quota?.windows, let first = windows.first {
+                        icons.append(createConcentricRingImage(
+                            outerPercentage: UsageRingDisplay.displayedPercentage(usedPercentage: first.usedPercentage, showRemainingMode: settings.showRemainingMode),
+                            innerPercentage: windows.dropFirst().first.map { UsageRingDisplay.displayedPercentage(usedPercentage: $0.usedPercentage, showRemainingMode: settings.showRemainingMode) },
+                            outerColor: .black, innerColor: .black, isMonochrome: true, button: button))
+                    } else if let icon = NSImage(systemSymbolName: "exclamationmark.circle", accessibilityDescription: provider.displayName) { icons.append(icon) }
                 case .codex:
                     if includeBrand, showingCodex,
                        let brand = createProviderBrandIcon(provider: .codex, isMonochrome: isMonochrome, size: providerBrandIconSize) {
                         icons.append(brand)
                     }
                     // 每个 Codex 账号一组圆环簇，顺序 = 配置顺序
-                    for entry in codexAccountUsages {
-                        guard let usage = entry.usage else { continue }
+                    for entry in menuBarCodexUsages {
+                        guard let usage = entry.usage else {
+                            icons.append(createAccountStatusIcon(failed: entry.needsRelogin || entry.errorMessage != nil))
+                            continue
+                        }
                         // 菜单栏用量环始终走系统模板色（浅色栏黑 / 深色栏白）
                         icons.append(contentsOf: buildCodexCluster(
                             codex: usage,
@@ -94,7 +118,11 @@ final class MenuBarIconRenderer {
                        let brand = createProviderBrandIcon(provider: .cursor, isMonochrome: isMonochrome, size: providerBrandIconSize) {
                         icons.append(brand)
                     }
-                    if let cursorUsageData {
+                    for entry in cursorSlots {
+                        guard let cursorUsageData = entry.usage, entry.errorMessage == nil, !entry.needsRelogin else {
+                            icons.append(createAccountStatusIcon(failed: entry.needsRelogin || entry.errorMessage != nil))
+                            continue
+                        }
                         icons.append(contentsOf: buildCursorCluster(
                             cursor: cursorUsageData,
                             isMonochrome: true,
@@ -322,6 +350,19 @@ final class MenuBarIconRenderer {
         ]
     }
 
+    /// Keep the same footprint as a usage cluster, including while loading or failed.
+    private func createAccountStatusIcon(failed: Bool) -> NSImage {
+        let size = NSSize(width: metricIconSize, height: metricIconSize)
+        let symbol = NSImage(systemSymbolName: failed ? "exclamationmark.circle" : "ellipsis.circle",
+                             accessibilityDescription: failed ? L.provider("refresh.failed") : L.Usage.loading)
+        let image = NSImage(size: size, flipped: false) { rect in
+            symbol?.draw(in: rect.insetBy(dx: 1, dy: 1))
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     private func createConcentricRingImage(
         outerPercentage: Double,
         innerPercentage: Double?,
@@ -361,8 +402,7 @@ final class MenuBarIconRenderer {
 
         let center = NSPoint(x: pointSize.width / 2, y: pointSize.height / 2)
         // 菜单栏适中厚度：微调更纤细精致，契合 macOS 现代菜单栏原生质感
-        let hasInner = innerPercentage != nil
-        let outerLineWidth: CGFloat = hasInner ? 2.8 : 3.0
+        let outerLineWidth: CGFloat = 2.8
         let innerLineWidth: CGFloat = 2.3
         let ringGap: CGFloat = 1.15
         let outerRadius = (pointSize.width / 2) - outerLineWidth / 2 - 0.6
@@ -524,6 +564,8 @@ final class MenuBarIconRenderer {
 
     private func createProviderBrandIcon(provider: ProviderType, isMonochrome: Bool, size: CGFloat) -> NSImage? {
         switch provider {
+        case .kimi, .glm:
+            return NSImage(systemSymbolName: provider == .kimi ? "moon" : "hexagon", accessibilityDescription: provider.displayName)
         case .codex:
             let iconName = isMonochrome ? "CodexMenuBarTemplate" : "CodexIcon"
             return ImageHelper.createSquareIcon(named: iconName, size: size, isTemplate: isMonochrome, sourceInset: isMonochrome ? 0 : 2)

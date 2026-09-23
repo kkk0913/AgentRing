@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import UniformTypeIdentifiers
 
 struct AuthSettingsView: View {
@@ -18,17 +19,34 @@ struct AuthSettingsView: View {
     /// Codex 复选模式下展开详情的账号
     @State private var expandedAccountId: UUID?
     @State private var draggedAccount: Account?
+    @State private var dropTargetAccountId: UUID?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        SettingsPaneScroll {
-            VStack(alignment: .leading, spacing: 16) {
-                Picker("", selection: $selectedProvider) {
-                    Text("Codex").tag(ProviderType.codex)
-                    Text("Cursor").tag(ProviderType.cursor)
-                    Text("Antigravity").tag(ProviderType.antigravity)
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L.provider("platforms")).font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
+                ForEach(ProviderType.configurable, id: \.self) { provider in
+                    HStack(spacing: 6) {
+                        Toggle("", isOn: Binding(get: { settings.isProviderEnabled(provider) },
+                            set: { settings.setProviderEnabled(provider, enabled: $0) }))
+                            .toggleStyle(.checkbox).labelsHidden()
+                            .accessibilityLabel(L.provider("monitor") + " " + provider.displayName)
+                        Button { selectedProvider = provider } label: {
+                            Text(provider.displayName).font(.system(size: 12, weight: selectedProvider == provider ? .semibold : .regular))
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 8)
+                    .background(selectedProvider == provider ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                Text(L.provider("selection_hint")).font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
+                Spacer(minLength: 0)
+            }.frame(width: 142).padding(.top, 20).padding(.horizontal, 12)
+            Divider()
+            SettingsPaneScroll {
+            VStack(alignment: .leading, spacing: 16) {
 
                 Group {
                     switch selectedProvider {
@@ -44,6 +62,7 @@ struct AuthSettingsView: View {
                             isEnabled: { settings.isCodexAccountEnabled($0.id) },
                             isExpanded: { expandedAccountId == $0.id },
                             onRowClick: { account in
+                                isShowingToken = false
                                 expandedAccountId = expandedAccountId == account.id ? nil : account.id
                             },
                             onToggle: { settings.setCodexAccountEnabled($0, enabled: $1) },
@@ -54,27 +73,30 @@ struct AuthSettingsView: View {
                     case .cursor:
                         providerAccountsCard(
                             accounts: settings.cursorAccounts,
-                            multiSelect: false,
+                            multiSelect: true,
                             title: L.Account.cursorAccounts,
                             addTitle: L.Account.addCursorAccount,
                             tokenLabel: "Cursor Session",
-                            onSelect: { settings.switchToCursorAccount($0) },
-                            isSelected: { $0.id == settings.currentCursorAccountId },
-                            isEnabled: { _ in true },
-                            isExpanded: { $0.id == settings.currentCursorAccountId },
-                            onRowClick: { settings.switchToCursorAccount($0) },
-                            onToggle: nil,
-                            onMove: nil,
+                            onSelect: nil,
+                            isSelected: { _ in false },
+                            isEnabled: { !settings.disabledCursorAccountIds.contains($0.id) },
+                            isExpanded: { expandedAccountId == $0.id },
+                            onRowClick: { account in isShowingToken = false; expandedAccountId = expandedAccountId == account.id ? nil : account.id },
+                            onToggle: { settings.setCursorAccountEnabled($0, enabled: $1) },
+                            onMove: { settings.moveCursorAccounts(from: $0, to: $1) },
                             onAdd: { WebLoginWindowManager.shared.showCursorLoginWindow() },
                             onUpdateAlias: { settings.updateCursorAccount($0, alias: $1) }
                         )
+                    case .kimi, .glm:
+                        PlanQuotaSettingsView(provider: selectedProvider).id(selectedProvider)
                     case .antigravity, .antigravityThird:
                         antigravityCard
                     }
                 }
 
-                diagnosticsDisclosure
+                if selectedProvider != .kimi && selectedProvider != .glm { diagnosticsDisclosure }
             }
+        }
         }
         .alert(L.Account.deleteConfirmTitle, isPresented: $showDeleteConfirmation) {
             Button(L.Account.cancel, role: .cancel) {}
@@ -82,6 +104,7 @@ struct AuthSettingsView: View {
                 if let accountToDelete {
                     if accountToDelete.provider == .cursor {
                         settings.removeCursorAccount(accountToDelete)
+
                     } else {
                         settings.removeCodexAccount(accountToDelete)
                     }
@@ -89,6 +112,17 @@ struct AuthSettingsView: View {
             }
         } message: {
             Text(L.Account.deleteConfirmMessage)
+        }
+        .onReceive(Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()) { _ in
+            if draggedAccount != nil && NSEvent.pressedMouseButtons == 0 {
+                draggedAccount = nil
+                dropTargetAccountId = nil
+            }
+        }
+        .onDisappear {
+            draggedAccount = nil
+            dropTargetAccountId = nil
+            isShowingToken = false
         }
         .onAppear {
             refreshAntigravityCredentialStatus()
@@ -98,6 +132,9 @@ struct AuthSettingsView: View {
         }
         .onChange(of: selectedProvider) { _ in
             isShowingToken = false
+            expandedAccountId = nil
+            draggedAccount = nil
+            dropTargetAccountId = nil
         }
     }
 
@@ -142,25 +179,24 @@ struct AuthSettingsView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 10) {
                                 if multiSelect, let onToggle {
-                                    // 复选框：勾选拉取并展示，未勾选保留登录但不参与
-                                    Button {
-                                        onToggle(account, !isEnabled(account))
-                                    } label: {
-                                        Image(systemName: isEnabled(account) ? "checkmark.circle.fill" : "circle")
-                                            .foregroundColor(isEnabled(account) ? .accentColor : .secondary)
-                                            .font(.body)
-                                    }
-                                    .buttonStyle(.plain)
+                                    Toggle(
+                                        L.Account.enableAccount,
+                                        isOn: Binding(
+                                            get: { isEnabled(account) },
+                                            set: { onToggle(account, $0) }
+                                        )
+                                    )
+                                    .labelsHidden()
+                                    .toggleStyle(.checkbox)
+                                    .accessibilityLabel("\(L.Account.enableAccount): \(account.displayName)")
                                     .help(L.Account.enableAccount)
                                 } else if let onSelect {
-                                    Button {
-                                        onSelect(account)
-                                    } label: {
-                                        Image(systemName: isSelected(account) ? "checkmark.circle.fill" : "circle")
-                                            .foregroundColor(isSelected(account) ? .accentColor : .secondary)
-                                            .font(.body)
-                                    }
-                                    .buttonStyle(.plain)
+                                    AccountRadioButton(
+                                        selected: isSelected(account),
+                                        label: account.displayName,
+                                        action: { onSelect(account) }
+                                    )
+                                    .frame(width: 18, height: 22)
                                 }
 
                                 Button {
@@ -169,7 +205,7 @@ struct AuthSettingsView: View {
                                     HStack(spacing: 6) {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(account.displayName)
-                                                .font(.subheadline)
+                                                .font(.body)
                                                 .fontWeight(.medium)
                                                 .foregroundColor(.primary)
                                             if let alias = account.alias, !alias.isEmpty {
@@ -179,15 +215,56 @@ struct AuthSettingsView: View {
                                             }
                                         }
                                         Spacer()
-                                        if multiSelect && onMove != nil && accounts.count > 1 {
-                                            Image(systemName: "line.3.horizontal")
+                                        if multiSelect {
+                                            Image(systemName: "chevron.right")
+                                                .rotationEffect(.degrees(isExpanded(account) ? 90 : 0))
+                                                .font(.caption)
                                                 .foregroundColor(.secondary)
-                                                .help(L.Usage.dragToReorder)
                                         }
                                     }
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .help(multiSelect ? L.Account.accountDetails : L.Account.selectAccount)
+
+                                if multiSelect, let onMove, accounts.count > 1,
+                                   let accountIndex = accounts.firstIndex(where: { $0.id == account.id }) {
+                                    Menu {
+                                        Button(L.Account.moveUp) {
+                                            onMove(IndexSet(integer: accountIndex), accountIndex - 1)
+                                        }
+                                        .disabled(accountIndex == 0)
+                                        Button(L.Account.moveDown) {
+                                            onMove(IndexSet(integer: accountIndex), accountIndex + 2)
+                                        }
+                                        .disabled(accountIndex == accounts.count - 1)
+                                    } label: {
+                                        Image(systemName: "arrow.up.arrow.down")
+                                            .frame(width: 24, height: 24)
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .menuIndicator(.hidden)
+                                    .fixedSize()
+                                    .help(L.Account.reorder)
+                                    .accessibilityLabel("\(L.Account.reorder): \(account.displayName)")
+
+                                    Image(systemName: "line.3.horizontal")
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 24, height: 24)
+                                        .contentShape(Rectangle())
+                                        .help(L.Usage.dragToReorder)
+                                        .accessibilityLabel(L.Usage.dragToReorder)
+                                        .onDrag {
+                                            draggedAccount = account
+                                            return NSItemProvider(object: account.id.uuidString as NSString)
+                                        } preview: {
+                                            Text(account.displayName)
+                                                .lineLimit(1)
+                                                .fixedSize(horizontal: true, vertical: false)
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 8)
+                                        }
+                                }
                             }
 
                             if isExpanded(account) {
@@ -198,16 +275,26 @@ struct AuthSettingsView: View {
                                 )
                             }
                         }
+                        .frame(minHeight: 36)
                         .padding(.vertical, 6)
                         .contentShape(Rectangle())
                         .opacity(draggedAccount?.id == account.id ? 0.35 : 1.0)
-                        .onDrag {
-                            guard multiSelect, onMove != nil else { return NSItemProvider() }
-                            draggedAccount = account
-                            return NSItemProvider(object: account.id.uuidString as NSString)
-                        } preview: {
-                            Text(account.displayName)
-                                .padding(8)
+                        .overlay {
+                            if dropTargetAccountId == account.id,
+                               let dragged = draggedAccount,
+                               dragged.id != account.id,
+                               let from = accounts.firstIndex(where: { $0.id == dragged.id }),
+                               let to = accounts.firstIndex(where: { $0.id == account.id }) {
+                                VStack(spacing: 0) {
+                                    if to > from { Spacer(minLength: 0) }
+                                    Capsule()
+                                        .fill(Color.accentColor)
+                                        .frame(height: 2)
+                                        .padding(.horizontal, 8)
+                                    if to < from { Spacer(minLength: 0) }
+                                }
+                                .allowsHitTesting(false)
+                            }
                         }
                         .onDrop(
                             of: [UTType.text.identifier],
@@ -215,7 +302,9 @@ struct AuthSettingsView: View {
                                 account: account,
                                 accounts: accounts,
                                 onMove: { onMove?($0, $1) },
-                                draggedItem: $draggedAccount
+                                draggedItem: $draggedAccount,
+                                dropTargetAccountId: $dropTargetAccountId,
+                                reduceMotion: reduceMotion
                             )
                         )
 
@@ -299,6 +388,7 @@ struct AuthSettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .help(isShowingToken ? L.SettingsAuth.hidePassword : L.SettingsAuth.showPassword)
+                    .accessibilityLabel(isShowingToken ? L.SettingsAuth.hidePassword : L.SettingsAuth.showPassword)
                 }
                 .padding(8)
                 .background(
@@ -316,11 +406,8 @@ struct AuthSettingsView: View {
             .buttonStyle(.borderless)
             .controlSize(.small)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.04))
-        )
+        .padding(.leading, 28)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Antigravity
@@ -428,9 +515,20 @@ private struct AccountDropDelegate: DropDelegate {
     let accounts: [Account]
     let onMove: (IndexSet, Int) -> Void
     @Binding var draggedItem: Account?
+    @Binding var dropTargetAccountId: UUID?
+    let reduceMotion: Bool
 
     func dropEntered(info: DropInfo) {
-        // 悬停不插入占位，松开才落位（与弹窗列拖拽一致）
+        guard draggedItem?.id != account.id else { return }
+        withAnimation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 1)) {
+            dropTargetAccountId = account.id
+        }
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTargetAccountId == account.id {
+            dropTargetAccountId = nil
+        }
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -438,16 +536,42 @@ private struct AccountDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        defer { draggedItem = nil }
+        defer {
+            draggedItem = nil
+            dropTargetAccountId = nil
+        }
         guard let dragged = draggedItem,
               dragged.id != account.id,
               let from = accounts.firstIndex(where: { $0.id == dragged.id }),
               let to = accounts.firstIndex(where: { $0.id == account.id }) else {
             return false
         }
-        withAnimation(.easeInOut(duration: 0.22)) {
+        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1)) {
             onMove(IndexSet(integer: from), to > from ? to + 1 : to)
         }
         return true
+    }
+}
+
+/// Native AppKit radio semantics for Cursor's mutually exclusive account selection.
+private struct AccountRadioButton: NSViewRepresentable {
+    let selected: Bool
+    let label: String
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(radioButtonWithTitle: "", target: context.coordinator, action: #selector(Coordinator.select))
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        return button
+    }
+    func updateNSView(_ button: NSButton, context: Context) {
+        button.state = selected ? .on : .off
+        button.setAccessibilityLabel(label)
+        context.coordinator.action = action
+    }
+    final class Coordinator: NSObject {
+        var action: (() -> Void)?
+        @objc func select() { action?() }
     }
 }

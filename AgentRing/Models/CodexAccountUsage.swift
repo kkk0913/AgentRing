@@ -15,3 +15,16 @@ struct CodexAccountUsage: Identifiable {
 
     var id: UUID { accountId }
 }
+
+/// Per-account snapshots for providers that share the same presentation and failure semantics.
+struct ProviderAccountUsage<Usage>: Identifiable {
+    let accountId: UUID
+    var displayName: String
+    var usage: Usage?
+    var lastUpdatedAt: Date? = nil
+    var needsRelogin = false
+    var errorMessage: String?
+    var id: UUID { accountId }
+}
+
+typealias CursorAccountUsage = ProviderAccountUsage<CursorUsageData>

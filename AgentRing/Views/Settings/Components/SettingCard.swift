@@ -8,6 +8,7 @@ import SwiftUI
 /// 可复用的设置卡片组件
 /// 提供统一的卡片式布局，包含图标、标题、内容和提示信息
 struct SettingCard<Content: View>: View {
+    @Environment(\.colorSchemeContrast) private var contrast
     let icon: String
     let iconColor: Color
     let title: String
@@ -29,43 +30,32 @@ struct SettingCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundColor(iconColor)
-                    .frame(width: 24)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
 
-                Text(title)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 content
             }
-            .padding(.leading, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color(nsColor: .separatorColor).opacity(contrast == .increased ? 1 : 0.35), lineWidth: contrast == .increased ? 1 : 0.5)
+                    .allowsHitTesting(false)
+            }
 
             if !hint.isEmpty {
                 Text(hint)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 32)
-                    .padding(.top, 4)
+                    .padding(.horizontal, 2)
             }
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(NSColor.controlBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.primary.opacity(0.03))
-                )
-        )
-        .shadow(color: Color.black.opacity(0.05), radius: 2, y: 1)
+        .padding(.bottom, 8)
     }
 }

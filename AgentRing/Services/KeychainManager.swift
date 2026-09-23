@@ -25,6 +25,25 @@ class KeychainManager {
         #endif
     }
 
+    func loadPlanConfiguration(_ provider: ProviderType) -> PlanQuotaConfiguration? {
+        guard let json = EncryptedCredentialStore().load(key: planConfigurationKey(provider)),
+              let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(PlanQuotaConfiguration.self, from: data)
+    }
+    func savePlanConfiguration(_ configuration: PlanQuotaConfiguration?, provider: ProviderType) -> Bool {
+        let store = EncryptedCredentialStore()
+        guard let configuration else { return store.delete(key: planConfigurationKey(provider)) }
+        guard let data = try? JSONEncoder().encode(configuration), let json = String(data: data, encoding: .utf8) else { return false }
+        return store.save(key: planConfigurationKey(provider), value: json)
+    }
+    private func planConfigurationKey(_ provider: ProviderType) -> String {
+        #if DEBUG
+        return "DEBUG_plan_" + provider.rawValue
+        #else
+        return "plan_" + provider.rawValue
+        #endif
+    }
+
     // MARK: - 存储配置
 
     #if DEBUG

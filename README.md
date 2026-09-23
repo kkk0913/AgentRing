@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/haorui-lab/agentRing/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-latest%20release-0A84FF?style=for-the-badge" /></a>
+  <a href="https://github.com/kkk0913/AgentRing/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-latest%20release-0A84FF?style=for-the-badge" /></a>
 </p>
 
 <p align="center">
@@ -21,8 +21,8 @@
   <img alt="Swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white" />
   <img alt="Size" src="https://img.shields.io/badge/size-%3C%207%20MB-lightgrey" />
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green" />
-  <img alt="Latest release" src="https://img.shields.io/github/v/release/haorui-lab/agentRing?include_prereleases" />
-  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/haorui-lab/agentRing/ci.yml?branch=main&label=CI" />
+  <img alt="Latest release" src="https://img.shields.io/github/v/release/kkk0913/AgentRing?include_prereleases" />
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/kkk0913/AgentRing/ci.yml?branch=main&label=CI" />
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@
 
 ## 下载
 
-1. 打开 [Latest Release](https://github.com/haorui-lab/agentRing/releases/latest)
+1. 打开 [Latest Release](https://github.com/kkk0913/AgentRing/releases/latest)
 2. 下载 `AgentRing-*-macos.dmg`（约 7 MB）
 3. 退出旧版，打开 DMG，将 `AgentRing.app` 拖入「应用程序」并选择替换
 4. 若系统提示无法验证开发者，在「系统设置 → 隐私与安全性」中选择「仍要打开」
@@ -92,7 +92,7 @@ flowchart LR
 **要求**：macOS 13+、Xcode 15+
 
 ```bash
-git clone https://github.com/haorui-lab/agentRing.git
+git clone https://github.com/kkk0913/AgentRing.git
 cd agentRing
 open AgentRing.xcodeproj
 ```
@@ -131,3 +131,6 @@ xcodebuild -project AgentRing.xcodeproj -scheme AgentRing \
 ## 说明
 
 - Bundle ID 为 `app.agentring.AgentRing`；首次升级会从旧 ID `app.agentsring.AgentsRing` 迁移钥匙串与偏好设置。对外显示名为 **Agent Ring**。
+
+
+本分支基于 [haorui-lab/agentRing](https://github.com/haorui-lab/agentRing)，保留原项目署名和许可证。

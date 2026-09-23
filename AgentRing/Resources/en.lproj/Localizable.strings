@@ -49,7 +49,7 @@
 
 // MARK: - Settings - Tabs
 "settings.tab.general" = "General";
-"settings.tab.auth" = "Authentication Settings";
+"settings.tab.auth" = "Accounts";
 "settings.tab.bluetooth" = "Companion Display";
 "settings.tab.about" = "About";
 
@@ -74,6 +74,10 @@
 "settings.general.usage_display_section" = "Usage Display Mode";
 "settings.general.usage_display_hint_remaining" = "Display remaining quota and remaining time";
 "settings.general.usage_display_hint_used" = "Display used quota and reset time";
+"settings.general.menubar_codex_accounts" = "Menu Bar Accounts";
+"settings.general.menubar_codex_all" = "Show All";
+"settings.general.menubar_codex_first" = "First per Platform";
+"settings.general.menubar_codex_hint" = "Applies to Codex and Cursor. The first enabled account follows the order in Accounts. The popover still shows all enabled accounts.";
 "settings.general.reset_button" = "Reset to Defaults";
 "icon_style.color_translucent" = "Color Translucent";
 "icon_style.color_with_background" = "Color with Background";
@@ -492,5 +496,59 @@
 
 "account.multi_hint" = "Checked accounts are monitored and displayed; the first checked account syncs to companion displays";
 "account.enable_account" = "Enable this account";
+"account.move_up" = "Move Up";
+"account.move_down" = "Move Down";
+"account.details" = "Show or hide account details";
+"account.select" = "Select this account";
 "bluetooth.sync_account" = "Syncing account: %@ (first checked)";
 "bluetooth.sync_account_none" = "No account";
+
+"account.reorder" = "Reorder account";
+
+"usage.previous_page" = "Previous page";
+"usage.next_page" = "Next page";
+
+// Platform configuration and plan quota
+"providers.platforms" = "Platforms";
+"providers.monitor" = "Monitor";
+"providers.selection_hint" = "Check to monitor. Click a name to configure. Turning off preserves accounts and credentials.";
+"providers.configure_first" = "Configure this platform in Authentication settings.";
+"providers.region" = "Service region";
+"providers.region.cn" = "Zhipu · China";
+"providers.kimi.hint" = "Use a Kimi Code subscription API key for the selected region to query quota directly. No CLI or local server required.";
+"providers.glm.hint" = "Use a GLM Coding Plan API key for the selected region to read plan quota.";
+"providers.kimi.token" = "Kimi Code API Key";
+"providers.glm.token" = "Coding Plan API Key";
+"providers.secret.placeholder" = "Enter credential";
+"providers.validate_enable" = "Verify & Enable";
+"providers.connected" = "Connected. Saved and monitoring enabled.";
+"providers.setup_guide" = "Official setup guide";
+"providers.remove" = "Remove configuration";
+"providers.remove_hint" = "Remove this platform’s saved local credential and turn off monitoring.";
+"providers.encrypted" = "Credentials are stored encrypted on this Mac.";
+"providers.error.credentials" = "Credential missing or expired. Check it and try again.";
+"providers.error.configuration" = "Invalid configuration. Check the service region.";
+"providers.error.response" = "Unrecognized quota response. Check the server version.";
+"providers.error.empty" = "No plan quota data available. Check your plan and sign-in status.";
+"providers.error.service" = "The service could not return quota. Check your sign-in status and retry.";
+"providers.error.http" = "Quota request failed";
+"providers.error.save" = "Could not save the credential. Try again.";
+"providers.quota.month" = "Monthly total";
+"providers.quota.code_month" = "Monthly coding";
+"providers.quota.tokens" = "Model quota";
+"providers.quota.mcp" = "MCP monthly";
+"providers.quota.no_reset" = "The provider did not supply a reset time.";
+"providers.quota.resets" = "Resets at";
+"providers.updated" = "Updated";
+"providers.configure_platforms" = "Configure all platforms";
+
+"providers.kimi.migration" = "This configuration uses an old local server token. Enter a Kimi Code API key and verify it.";
+
+"providers.kimi.region.cn" = "China · kimi.com";
+
+"providers.kimi.region.global" = "International · kimi.ai";
+
+"providers.kimi.get_key" = "Get a Kimi Code API key";
+
+"providers.refresh.failed" = "Refresh failed";
+"providers.refresh.cached" = "Cached data · Last updated";

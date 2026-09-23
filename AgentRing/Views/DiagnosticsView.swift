@@ -99,6 +99,8 @@ private struct ProviderResultCard: View {
 
     private var providerIcon: String {
         switch result.providerType {
+        case .kimi: return "moon"
+        case .glm: return "hexagon"
         case .codex: return "sparkle"
         case .cursor: return "cursorarrow.rays"
         case .antigravity, .antigravityThird: return "atom"

@@ -27,6 +27,18 @@ enum IconDisplayMode: String, CaseIterable, Codable {
     }
 }
 
+enum MenuBarCodexDisplayMode: String, CaseIterable, Codable {
+    case all
+    case first
+
+    var localizedName: String {
+        switch self {
+        case .all: return L.SettingsGeneral.menuBarCodexAll
+        case .first: return L.SettingsGeneral.menuBarCodexFirst
+        }
+    }
+}
+
 enum IconStyleMode: String, CaseIterable, Codable {
     case colorTranslucent = "color_translucent"
     case colorWithBackground = "color_with_background"
@@ -256,28 +268,58 @@ final class UserSettings: ObservableObject {
     @Published var disabledCodexAccountIds: Set<UUID> = [] {
         didSet {
             defaults.set(disabledCodexAccountIds.map(\.uuidString), forKey: "disabledCodexAccountIds")
-            NotificationCenter.default.post(name: .settingsChanged, object: nil)
         }
     }
 
-    @Published var cursorAccounts: [Account] = [] {
-        didSet { saveCursorAccounts() }
-    }
+    @Published private(set) var disabledProviders: Set<ProviderType> = [.kimi, .glm]
+    @Published private(set) var planConfigurations: [ProviderType: PlanQuotaConfiguration] = [:]
 
-    @Published var currentCursorAccountId: UUID? {
-        didSet {
-            let key = Self.currentCursorAccountIdKey
-            if let id = currentCursorAccountId {
-                defaults.set(id.uuidString, forKey: key)
-            } else {
-                defaults.removeObject(forKey: key)
+    func isProviderEnabled(_ provider: ProviderType) -> Bool {
+        if provider == .antigravity || provider == .antigravityThird { return antigravityEnabled }
+        return !disabledProviders.contains(provider)
+    }
+    func setProviderEnabled(_ provider: ProviderType, enabled: Bool) {
+        if provider == .antigravity || provider == .antigravityThird { antigravityEnabled = enabled; return }
+        if enabled { disabledProviders.remove(provider) } else { disabledProviders.insert(provider) }
+        defaults.set(disabledProviders.map(\.rawValue), forKey: "disabledProviders")
+        resetSmartMonitoringState()
+        postAccountChanged(provider: provider)
+    }
+    func savePlanConfiguration(_ configuration: PlanQuotaConfiguration?, provider: ProviderType, completion: @escaping (Bool) -> Void) {
+        accountSaveQueue.async {
+            let saved = KeychainManager.shared.savePlanConfiguration(configuration, provider: provider)
+            DispatchQueue.main.async {
+                if saved {
+                    self.planConfigurations[provider] = configuration
+                    self.postAccountChanged(provider: provider)
+                }
+                completion(saved)
             }
         }
     }
 
+    private let accountSaveQueue = DispatchQueue(label: "app.agentring.account-save")
+    @Published var disabledCursorAccountIds: Set<UUID> = [] {
+        didSet { defaults.set(disabledCursorAccountIds.map(\.uuidString), forKey: "disabledCursorAccountIds") }
+    }
+    var enabledCursorAccounts: [Account] {
+        cursorAccounts.filter { !disabledCursorAccountIds.contains($0.id) }
+    }
+    func setCursorAccountEnabled(_ account: Account, enabled: Bool) {
+        if enabled { disabledCursorAccountIds.remove(account.id) }
+        else { disabledCursorAccountIds.insert(account.id) }
+        postAccountChanged(provider: .cursor)
+    }
+    func moveCursorAccounts(from source: IndexSet, to destination: Int) {
+        cursorAccounts.move(fromOffsets: source, toOffset: destination)
+        postAccountChanged(provider: .cursor)
+    }
+    @Published var cursorAccounts: [Account] = [] {
+        didSet { saveCursorAccounts() }
+    }
+
     var currentCursorAccount: Account? {
-        guard let id = currentCursorAccountId else { return cursorAccounts.first }
-        return cursorAccounts.first { $0.id == id } ?? cursorAccounts.first
+        enabledCursorAccounts.first
     }
 
     /// 启用（勾选）的 Codex 账号，顺序 = 配置顺序
@@ -334,11 +376,11 @@ final class UserSettings: ObservableObject {
     }
 
     var hasValidCodexCredentials: Bool {
-        enabledCodexAccounts.contains { !$0.credentialToken.isEmpty }
+        isProviderEnabled(.codex) && enabledCodexAccounts.contains { !$0.credentialToken.isEmpty }
     }
 
     var hasValidCursorCredentials: Bool {
-        !cursorSessionToken.isEmpty
+        isProviderEnabled(.cursor) && enabledCursorAccounts.contains { !$0.credentialToken.isEmpty }
     }
 
     /// Antigravity 是否纳入监控（用户开关；默认开启，真正能否拉取取决于系统凭证）
@@ -364,6 +406,7 @@ final class UserSettings: ObservableObject {
 
     var hasAnyValidCredentials: Bool {
         hasValidCodexCredentials || hasValidCursorCredentials || hasValidAntigravityCredentials
+            || [ProviderType.kimi, .glm].contains { isProviderEnabled($0) && planConfigurations[$0] != nil }
     }
 
     var hasValidCredentials: Bool {
@@ -387,6 +430,13 @@ final class UserSettings: ObservableObject {
     @Published var iconDisplayMode: IconDisplayMode {
         didSet {
             defaults.set(iconDisplayMode.rawValue, forKey: "iconDisplayMode")
+            NotificationCenter.default.post(name: .settingsChanged, object: nil)
+        }
+    }
+
+    @Published var menuBarCodexDisplayMode: MenuBarCodexDisplayMode {
+        didSet {
+            defaults.set(menuBarCodexDisplayMode.rawValue, forKey: "menuBarCodexDisplayMode")
             NotificationCenter.default.post(name: .settingsChanged, object: nil)
         }
     }
@@ -620,7 +670,7 @@ final class UserSettings: ObservableObject {
     #endif
 
     var lastUtilization: Double?
-    var lastUtilizationByProvider: [ProviderType: Double] = [:]
+    private var monitoringSnapshot = AccountMonitoringSnapshot()
     var unchangedCount = 0
     var currentMonitoringMode: MonitoringMode = .active
 
@@ -630,16 +680,11 @@ final class UserSettings: ObservableObject {
         refreshMode == .smart ? currentMonitoringMode.interval : refreshInterval
     }
 
-    private static var currentCursorAccountIdKey: String {
-        #if DEBUG
-        return "DEBUG_currentCursorAccountId"
-        #else
-        return "currentCursorAccountId"
-        #endif
-    }
-
     private init() {
         LegacyBundleMigration.runIfNeeded()
+        if let saved = defaults.array(forKey: "disabledProviders") as? [String] {
+            disabledProviders = Set(saved.compactMap(ProviderType.init(rawValue:)))
+        }
 
         let loadedCodexAccounts = keychain.loadCodexAccounts() ?? keychain.loadAccounts() ?? []
         let mappedCodexAccounts = loadedCodexAccounts.map { account in
@@ -664,14 +709,13 @@ final class UserSettings: ObservableObject {
             return copy
         }
         cursorAccounts = loadedCursorAccounts
-        if let idString = defaults.string(forKey: Self.currentCursorAccountIdKey),
-           let id = UUID(uuidString: idString) {
-            currentCursorAccountId = id
-        } else {
-            currentCursorAccountId = loadedCursorAccounts.first?.id
-        }
+        // Existing Cursor accounts are enabled by default, matching the Codex migration.
+        disabledCursorAccountIds = Set((defaults.array(forKey: "disabledCursorAccountIds") as? [String] ?? []).compactMap(UUID.init(uuidString:)))
+        defaults.removeObject(forKey: "currentCursorAccountId")
+        defaults.removeObject(forKey: "DEBUG_currentCursorAccountId")
 
         iconDisplayMode = defaults.string(forKey: "iconDisplayMode").flatMap(IconDisplayMode.init(rawValue:)) ?? .percentageOnly
+        menuBarCodexDisplayMode = defaults.string(forKey: "menuBarCodexDisplayMode").flatMap(MenuBarCodexDisplayMode.init(rawValue:)) ?? .all
         iconStyleMode = defaults.string(forKey: "iconStyleMode").flatMap(IconStyleMode.init(rawValue:)) ?? .colorTranslucent
         refreshMode = defaults.string(forKey: "refreshMode").flatMap(RefreshMode.init(rawValue:)) ?? .smart
 
@@ -755,6 +799,10 @@ final class UserSettings: ObservableObject {
             ensureDefaultAntigravityDisplayTypesForCustomMode()
         }
 
+        for provider in [ProviderType.kimi, .glm] {
+            planConfigurations[provider] = keychain.loadPlanConfiguration(provider)
+        }
+
         syncLaunchAtLoginStatus()
         applyAppearance()
     }
@@ -785,6 +833,7 @@ final class UserSettings: ObservableObject {
     func resetToDefaults() {
         appearance = .system
         iconDisplayMode = .percentageOnly
+        menuBarCodexDisplayMode = .all
         iconStyleMode = .colorTranslucent
         refreshMode = .smart
         refreshInterval = 180
@@ -832,7 +881,8 @@ final class UserSettings: ObservableObject {
                 active.insert(.antigravityThird)
             }
         }
-        return providerOrder.filter { active.contains($0) }
+        for provider in [ProviderType.kimi, .glm] where isProviderEnabled(provider) { active.insert(provider) }
+        return providerOrder.filter { active.contains($0) && isProviderEnabled($0) }
     }
 
     func isValidSessionKey(_ key: String) -> Bool {
@@ -844,25 +894,19 @@ final class UserSettings: ObservableObject {
     }
 
     func updateSmartMonitoringMode(providerUtilizations: [ProviderType: Double]) {
-        guard refreshMode == .smart, !providerUtilizations.isEmpty else { return }
+        updateSmartMonitoringMode(accountUtilizations: Dictionary(uniqueKeysWithValues:
+            providerUtilizations.map { ($0.key.rawValue, $0.value) }))
+    }
 
-        if hasProviderUtilizationChanged(providerUtilizations) {
+    func updateSmartMonitoringMode(accountUtilizations: [String: Double]) {
+        guard refreshMode == .smart, !accountUtilizations.isEmpty else { return }
+        if monitoringSnapshot.record(accountUtilizations) {
+            unchangedCount = 0
             switchToActiveMode()
         } else {
             handleNoChange()
         }
-
-        for (provider, utilization) in providerUtilizations {
-            lastUtilizationByProvider[provider] = utilization
-        }
-        lastUtilization = providerUtilizations[.codex] ?? providerUtilizations.values.first
-    }
-
-    private func hasProviderUtilizationChanged(_ current: [ProviderType: Double]) -> Bool {
-        current.contains { provider, utilization in
-            guard let last = lastUtilizationByProvider[provider] else { return false }
-            return abs(utilization - last) > 0.01
-        }
+        lastUtilization = accountUtilizations.values.max()
     }
 
     private func switchToActiveMode() {
@@ -890,22 +934,22 @@ final class UserSettings: ObservableObject {
 
     func resetSmartMonitoringState() {
         lastUtilization = nil
-        lastUtilizationByProvider.removeAll()
+        monitoringSnapshot = AccountMonitoringSnapshot()
         unchangedCount = 0
         currentMonitoringMode = .active
     }
 
     private func saveCodexAccounts() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            self.keychain.saveCodexAccounts(self.codexAccounts)
+        let snapshot = codexAccounts
+        accountSaveQueue.async { [weak self] in
+            self?.keychain.saveCodexAccounts(snapshot)
         }
     }
 
     private func saveCursorAccounts() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            self.keychain.saveCursorAccounts(self.cursorAccounts)
+        let snapshot = cursorAccounts
+        accountSaveQueue.async { [weak self] in
+            self?.keychain.saveCursorAccounts(snapshot)
         }
     }
 
@@ -972,9 +1016,6 @@ final class UserSettings: ObservableObject {
             cursorAccounts[index].accountIdentifier = account.accountIdentifier
             cursorAccounts[index].accountName = account.accountName
             cursorAccounts[index].provider = .cursor
-            if currentCursorAccountId == nil {
-                currentCursorAccountId = cursorAccounts[index].id
-            }
             postAccountChanged(provider: .cursor)
             return cursorAccounts[index]
         }
@@ -982,9 +1023,7 @@ final class UserSettings: ObservableObject {
         var storedAccount = account
         storedAccount.provider = .cursor
         cursorAccounts.append(storedAccount)
-        if cursorAccounts.count == 1 {
-            currentCursorAccountId = storedAccount.id
-        }
+        disabledCursorAccountIds.remove(storedAccount.id)
         ensureDefaultCursorDisplayTypesForCustomMode()
         postAccountChanged(provider: .cursor)
         return storedAccount
@@ -992,25 +1031,16 @@ final class UserSettings: ObservableObject {
 
     func removeCursorAccount(_ account: Account) {
         guard let index = cursorAccounts.firstIndex(where: { $0.id == account.id }) else { return }
-        let wasCurrent = currentCursorAccountId == account.id
         cursorAccounts.remove(at: index)
+        disabledCursorAccountIds.remove(account.id)
         NotificationManager.shared.resetNotificationStates(for: .cursor, accountId: account.id)
-        if wasCurrent {
-            currentCursorAccountId = cursorAccounts.first?.id
-            postAccountChanged(provider: .cursor)
-        }
-    }
-
-    func switchToCursorAccount(_ account: Account) {
-        guard account.id != currentCursorAccountId else { return }
-        guard cursorAccounts.contains(where: { $0.id == account.id }) else { return }
-        currentCursorAccountId = account.id
         postAccountChanged(provider: .cursor)
     }
 
     func updateCursorAccount(_ account: Account, alias: String?) {
         guard let index = cursorAccounts.firstIndex(where: { $0.id == account.id }) else { return }
         cursorAccounts[index].alias = alias
+        postAccountChanged(provider: .cursor)
     }
 
     private func postAccountChanged() {

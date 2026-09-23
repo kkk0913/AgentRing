@@ -63,6 +63,9 @@ struct WelcomeView: View {
                     }
                     .buttonStyle(.bordered)
                 }
+                Button(L.provider("configure_platforms")) {
+                    NotificationCenter.default.post(name: .openSettings, object: nil, userInfo: ["tab": 1])
+                }
             }
             .padding(.top, 22)
             .padding(.horizontal, 28)

@@ -16,6 +16,9 @@ struct GeneralSettingsView: View {
         SettingsPaneScroll {
             VStack(spacing: 16) {
                 usageDisplayCard
+                if settings.codexAccounts.count > 1 || settings.cursorAccounts.count > 1 {
+                    menuBarCodexCard
+                }
                 refreshCard
                 notificationCard
                 launchCard
@@ -47,6 +50,22 @@ struct GeneralSettingsView: View {
                 selection: $settings.usageDisplayValueMode,
                 values: UsageDisplayValueMode.allCases
             ) { $0.localizedName }
+        }
+    }
+
+    private var menuBarCodexCard: some View {
+        SettingCard(
+            icon: "menubar.rectangle",
+            title: L.SettingsGeneral.menuBarCodexAccounts,
+            hint: L.SettingsGeneral.menuBarCodexHint
+        ) {
+            Picker(L.SettingsGeneral.menuBarCodexAccounts, selection: $settings.menuBarCodexDisplayMode) {
+                ForEach(MenuBarCodexDisplayMode.allCases, id: \.self) { mode in
+                    Text(mode.localizedName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
         }
     }
 
@@ -83,15 +102,13 @@ struct GeneralSettingsView: View {
         SettingCard(
             icon: "bell.badge",
             iconColor: .secondary,
-            title: L.SettingsNotification.section,
-            hint: L.SettingsNotification.hint
+            title: L.SettingsNotification.section
         ) {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle(isOn: $settings.notificationsEnabled) {
                     Text(L.SettingsNotification.enable)
                 }
                 .toggleStyle(.checkbox)
-                .focusable(false)
 
                 Text(L.SettingsNotification.description)
                     .font(.caption)
@@ -106,15 +123,13 @@ struct GeneralSettingsView: View {
         SettingCard(
             icon: "power",
             iconColor: .secondary,
-            title: L.SettingsGeneral.launchSection,
-            hint: statusText
+            title: L.SettingsGeneral.launchSection
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 Toggle(isOn: $settings.launchAtLogin) {
                     Text(L.SettingsGeneral.launchAtLogin)
                 }
                 .toggleStyle(.checkbox)
-                .focusable(false)
 
                 HStack(spacing: 6) {
                     Circle()
@@ -142,7 +157,6 @@ struct GeneralSettingsView: View {
                     Text(L.SettingsUpdate.autoUpdate)
                 }
                 .toggleStyle(.checkbox)
-                .focusable(false)
 
                 Text(L.SettingsUpdate.autoUpdateHint)
                     .font(.caption)
@@ -246,24 +260,13 @@ struct GeneralSettingsView: View {
         values: S,
         title: @escaping (T) -> String
     ) -> some View where S.Element == T {
-        VStack(alignment: .leading, spacing: 6) {
+        Picker(title(selection.wrappedValue), selection: selection) {
             ForEach(Array(values), id: \.self) { value in
-                Button {
-                    selection.wrappedValue = value
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: selection.wrappedValue == value ? "circle.inset.filled" : "circle")
-                            .font(.body)
-                            .foregroundColor(selection.wrappedValue == value ? .accentColor : .secondary)
-                            .frame(width: 16)
-                        Text(title(value))
-                            .foregroundColor(.primary)
-                    }
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
+                Text(title(value)).tag(value)
             }
         }
+        .pickerStyle(.radioGroup)
+        .labelsHidden()
     }
 
 }

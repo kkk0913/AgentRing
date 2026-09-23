@@ -10,11 +10,7 @@ struct AntigravityColumnView: View {
     let antigravityUsageData: AntigravityUsageData
     let showRemainingMode: Bool
     let refreshState: RefreshState
-    @Binding var animationType: UsageDetailView.LoadingAnimationType
-    @Binding var rotationAngle: Double
-    let remainingModeAnimationTrigger: Int
     var onRefresh: (() -> Void)?
-    var onAnimationHint: ((String) -> Void)?
 
     private var activeTypes: [LimitType] {
         UserSettings.shared.getActiveAntigravityDisplayTypes(
@@ -68,24 +64,21 @@ struct AntigravityColumnView: View {
                     outerColor: outerColor,
                     innerColor: innerColor,
                     isRefreshing: isRefreshing,
-                    rotationAngle: rotationAngle,
-                    showRemainingMode: showRemainingMode,
-                    remainingModeAnimationTrigger: remainingModeAnimationTrigger,
-                    animationType: animationType
+                    showRemainingMode: showRemainingMode
                 )
             }
-            .frame(height: 114)
+            .frame(height: 100)
+            .accessibilityLabel(L.Usage.refresh)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                if refreshState.canRefresh && !refreshState.isRefreshing { onRefresh?() }
+            }
+            .help(L.Usage.refresh)
             .contentShape(Circle())
             .onTapGesture {
                 if refreshState.canRefresh && !refreshState.isRefreshing {
                     onRefresh?()
                 }
-            }
-            .onLongPressGesture(minimumDuration: 3.0) {
-                let allTypes = UsageDetailView.LoadingAnimationType.allCases
-                let currentIndex = allTypes.firstIndex(of: animationType) ?? 0
-                animationType = allTypes[(currentIndex + 1) % allTypes.count]
-                onAnimationHint?(animationType.name)
             }
 
             limitRows(for: activeTypes) { type in

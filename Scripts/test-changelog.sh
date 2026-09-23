@@ -5,6 +5,25 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$REPO_ROOT/Scripts/generate-changelog.swift"
 
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+# Use a tiny local repository; a fork need not carry the upstream tags.
+mkdir -p "$WORK/docs"
+cp "$REPO_ROOT/docs/release-installation.md" "$WORK/docs/"
+cd "$WORK"
+git init -q
+git config user.name 'Release Test'
+git config user.email 'test@example.invalid'
+git remote add origin https://github.com/kkk0913/AgentRing.git
+git add docs
+git commit -qm 'feat: initial version'
+git tag v0.1.6
+git commit --allow-empty -qm 'chore(skill): add tooling'
+git tag v0.1.7
+git commit --allow-empty -qm 'fix(auth): isolate credentials'
+git commit --allow-empty -qm 'chore(release): v0.1.8'
+git tag v0.1.8
+
 OUTPUT=$(swift "$SCRIPT" v0.1.7 v0.1.8)
 
 # 1. 必须包含 fix(auth)
@@ -22,7 +41,7 @@ fi
 echo "PASS: filtered chore(release) bump"
 
 # 3. 必须包含 Full Changelog 对比链接
-if ! grep -Fq "https://github.com/haorui-lab/agentRing/compare/v0.1.7...v0.1.8" <<< "$OUTPUT"; then
+if ! grep -Fq "https://github.com/kkk0913/AgentRing/compare/v0.1.7...v0.1.8" <<< "$OUTPUT"; then
     echo "FAIL: changelog missing compare link"
     exit 1
 fi

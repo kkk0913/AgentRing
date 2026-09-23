@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 import UniformTypeIdentifiers
 
 struct UsageDetailView: View {
@@ -15,24 +16,14 @@ struct UsageDetailView: View {
     @Binding var cursorNeedsRelogin: Bool
     @Binding var antigravityNeedsRelogin: Bool
     @ObservedObject var refreshState: RefreshState
+    var cursorAccountUsages: [CursorAccountUsage] = []
+    var planQuotaStates: [ProviderType: PlanQuotaState] = [:]
+    var availableSize: CGSize = CGSize(width: 1040, height: 800)
     var onMenuAction: ((MenuAction) -> Void)? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var localization = LocalizationManager.shared
     @Binding var hasAvailableUpdate: Bool
     @Binding var shouldShowUpdateBadge: Bool
-
-    enum LoadingAnimationType: Int, CaseIterable {
-        case rainbow = 0
-        case dashed = 1
-        case pulse = 2
-
-        var name: String {
-            switch self {
-            case .rainbow: return L.LoadingAnimation.rainbow
-            case .dashed: return L.LoadingAnimation.dashed
-            case .pulse: return L.LoadingAnimation.pulse
-            }
-        }
-    }
 
     enum MenuAction {
         case generalSettings
@@ -51,7 +42,9 @@ struct UsageDetailView: View {
         enum Source: Hashable {
             case codexAccount(UUID)
             case codexPlaceholder
+            case cursorAccount(UUID)
             case cursor
+            case plan(ProviderType)
             case antigravity
             case antigravityThird
         }
@@ -60,20 +53,17 @@ struct UsageDetailView: View {
         var id: String { "\(source)" }
     }
 
-    @State var codexAnimationType: LoadingAnimationType = .rainbow
-    @State var cursorAnimationType: LoadingAnimationType = .rainbow
-    @State var antigravityAnimationType: LoadingAnimationType = .rainbow
     @State var rotationAngle: Double = 0
     @State var animationTimer: Timer?
-    @State private var showAnimationTypeHint = false
-    @State private var animationTypeHintName = ""
-    @State private var animationTypeHintDismissWorkItem: DispatchWorkItem?
     @ObservedObject private var settings = UserSettings.shared
     private var showRemainingMode: Bool {
         settings.showRemainingMode
     }
-    @State private var remainingModeAnimationTrigger = 0
     @State private var orderedProviders: [ProviderType] = []
+    @State private var currentPage = 0
+    @State private var dropTargetProvider: ProviderType?
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var draggedProvider: ProviderType? = nil
 
     private var activeProviders: [ProviderType] {
@@ -93,6 +83,8 @@ struct UsageDetailView: View {
         var units: [ColumnUnit] = []
         for provider in displayProviders {
             switch provider {
+            case .kimi, .glm:
+                units.append(ColumnUnit(source: .plan(provider)))
             case .codex:
                 if codexAccountUsages.isEmpty {
                     units.append(ColumnUnit(source: .codexPlaceholder))
@@ -100,7 +92,8 @@ struct UsageDetailView: View {
                     units.append(contentsOf: codexAccountUsages.map { ColumnUnit(source: .codexAccount($0.accountId)) })
                 }
             case .cursor:
-                units.append(ColumnUnit(source: .cursor))
+                units.append(contentsOf: cursorAccountUsages.isEmpty ? [ColumnUnit(source: .cursor)]
+                    : cursorAccountUsages.map { ColumnUnit(source: .cursorAccount($0.accountId)) })
             case .antigravity:
                 units.append(ColumnUnit(source: .antigravity))
             case .antigravityThird:
@@ -113,7 +106,7 @@ struct UsageDetailView: View {
     /// 按每行至多 4 列折行分组
     private func groupedUnitRows() -> [[ColumnUnit]] {
         guard !columnUnits.isEmpty else { return [] }
-        let widths = PopoverLayout.wrapRows(unitCount: columnUnits.count)
+        let widths = PopoverLayout.wrapRows(unitCount: columnUnits.count, availableWidth: availableSize.width)
         var rows: [[ColumnUnit]] = []
         var cursorIndex = columnUnits.startIndex
         for width in widths {
@@ -127,7 +120,7 @@ struct UsageDetailView: View {
     /// 拖拽排序仅在"每列恰好一个平台、单行"时启用；
     /// 多 Codex 账号展开为多列后，账号顺序以认证设置页拖拽为准。
     private var supportsProviderReordering: Bool {
-        columnUnits.count == displayProviders.count && PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1)).count == 1
+        columnUnits.count == displayProviders.count && PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1), availableWidth: availableSize.width).count == 1
     }
 
     private func columnWidth(forRowCount count: Int) -> CGFloat {
@@ -135,7 +128,7 @@ struct UsageDetailView: View {
     }
 
     private var popoverWidth: CGFloat {
-        PopoverLayout.viewWidth(maxRowColumns: PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1)).max() ?? 1)
+        PopoverLayout.viewWidth(maxRowColumns: PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1), availableWidth: availableSize.width).max() ?? 1)
     }
 
     private var showsMultipleProviders: Bool {
@@ -147,26 +140,27 @@ struct UsageDetailView: View {
             PopoverLayout.limitRowCount(
                 codexUsages: codexAccountUsages.map { $0.usage },
                 cursorUsageData: cursorUsageData,
-                antigravityUsageData: antigravityUsageData
+                antigravityUsageData: antigravityUsageData,
+                cursorUsages: cursorAccountUsages.compactMap { $0.usage },
+                planQuotas: planQuotaStates.values.compactMap { $0.quota }
             ),
             columnUnits.isEmpty ? 0 : 1
         )
     }
 
-    private var contentSpacing: CGFloat {
-        limitRowCount >= 2 ? 10 : 16
-    }
-
-    private var contentHeight: CGFloat {
-        PopoverLayout.contentHeight(
-            wrapRowCount: PopoverLayout.wrapRows(unitCount: max(columnUnits.count, 1)).count,
+    private var pageLayout: (rowsPerPage: Int, pageCount: Int, height: CGFloat) {
+        PopoverLayout.pageLayout(
+            wrapRowCount: max(1, groupedUnitRows().count),
             limitRowCount: limitRowCount,
-            showsMultiple: showsMultipleProviders
+            showsMultiple: showsMultipleProviders,
+            availableHeight: availableSize.height
         )
     }
 
+    private var visiblePage: Int { min(currentPage, pageLayout.pageCount - 1) }
+
     private var providerDividerHeight: CGFloat {
-        max(160, contentHeight - (showsMultipleProviders ? 52 : 40))
+        PopoverLayout.rowHeight(limitRowCount: limitRowCount, showsMultiple: showsMultipleProviders)
     }
 
     private var dashboardTitleText: String {
@@ -195,6 +189,8 @@ struct UsageDetailView: View {
                     }
                     Text(providerTitle(for: provider))
                         .font(.headline)
+                case .kimi, .glm:
+                    Text(provider.displayName).font(.headline)
                 case .cursor:
                     Image(systemName: "cursorarrow.click")
                         .font(.system(size: 16, weight: .semibold))
@@ -219,7 +215,7 @@ struct UsageDetailView: View {
             Spacer()
             refreshAndMenuButtons
         }
-        .frame(height: 20, alignment: .center)
+        .frame(height: 28, alignment: .center)
         .padding(.horizontal)
         .padding(.top)
     }
@@ -230,27 +226,26 @@ struct UsageDetailView: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
-                    .rotationEffect(.degrees(refreshState.isRefreshing ? rotationAngle : 0))
-                    .frame(width: 20, height: 20)
+                    .rotationEffect(.degrees(refreshState.isRefreshing && !reduceMotion ? rotationAngle : 0))
+                    .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .disabled(!refreshState.canRefresh || refreshState.isRefreshing)
-            .focusable(false)
             .help(L.Usage.refresh)
+            .accessibilityLabel(L.Usage.refresh)
 
             ZStack(alignment: .topTrailing) {
                 Button(action: { onMenuAction?(.generalSettings) }) {
-                    Image(systemName: "ellipsis")
+                    Image(systemName: "gearshape")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.secondary)
-                        .rotationEffect(.degrees(90))
-                        .frame(width: 20, height: 20)
+                        .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
-                .focusable(false)
-                .help(L.Menu.generalSettings)
+                    .help(L.Menu.generalSettings)
+                .accessibilityLabel(L.Menu.generalSettings)
 
                 if shouldShowUpdateBadge {
                     Circle()
@@ -265,7 +260,7 @@ struct UsageDetailView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        let rows = groupedUnitRows()
+        let rows = Array(groupedUnitRows().dropFirst(visiblePage * pageLayout.rowsPerPage).prefix(pageLayout.rowsPerPage))
         if rows.isEmpty {
             if let errorMessage {
                 errorState(
@@ -286,7 +281,7 @@ struct UsageDetailView: View {
         } else if rows.count == 1, let single = rows[0].first, !showsMultipleProviders {
             columnView(for: single)
         } else {
-            VStack(spacing: 12) {
+            VStack(spacing: PopoverLayout.rowSpacing) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, rowUnits in
                     HStack(alignment: .top, spacing: 8) {
                         ForEach(Array(rowUnits.enumerated()), id: \.element) { index, unit in
@@ -316,7 +311,8 @@ struct UsageDetailView: View {
     private func provider(for unit: ColumnUnit) -> ProviderType? {
         switch unit.source {
         case .codexAccount, .codexPlaceholder: return .codex
-        case .cursor: return .cursor
+        case .cursor, .cursorAccount: return .cursor
+        case .plan(let provider): return provider
         case .antigravity: return .antigravity
         case .antigravityThird: return .antigravityThird
         }
@@ -338,6 +334,11 @@ struct UsageDetailView: View {
     private func draggableColumn(for unit: ColumnUnit, provider: ProviderType) -> some View {
         let isDragging = draggedProvider == provider
         columnView(for: unit)
+            .overlay(alignment: providerDropAlignment(for: provider)) {
+                if dropTargetProvider == provider && draggedProvider != provider {
+                    Capsule().fill(Color.accentColor).frame(width: 2)
+                }
+            }
             .opacity(isDragging ? 0.35 : 1.0)
             .contentShape(Rectangle())
             .onDrag {
@@ -354,19 +355,28 @@ struct UsageDetailView: View {
                 delegate: ProviderDropDelegate(
                     item: provider,
                     providers: $orderedProviders,
-                    draggedItem: $draggedProvider
+                    draggedItem: $draggedProvider,
+                    dropTarget: $dropTargetProvider,
+                    reduceMotion: reduceMotion
                 )
             )
     }
 
+    private func providerDropAlignment(for provider: ProviderType) -> Alignment {
+        guard let draggedProvider,
+              let source = displayProviders.firstIndex(of: draggedProvider),
+              let target = displayProviders.firstIndex(of: provider) else { return .leading }
+        return source < target ? .trailing : .leading
+    }
+
     private func columnHeader(for unit: ColumnUnit) -> some View {
         Text(columnTitle(for: unit))
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.secondary)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.primary)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.top, 2)
-            .help(L.Usage.dragToReorder)
+            .frame(height: 20)
+            .help(supportsProviderReordering ? L.Usage.dragToReorder : columnTitle(for: unit))
     }
 
     private func columnTitle(for unit: ColumnUnit) -> String {
@@ -375,6 +385,9 @@ struct UsageDetailView: View {
             return codexAccountUsages.first { $0.accountId == accountId }?.displayName ?? L.Usage.codexTitle
         case .codexPlaceholder:
             return L.Usage.codexTitle
+        case .plan(let provider): return provider.displayName
+        case .cursorAccount(let id):
+            return "Cursor · " + (cursorAccountUsages.first { $0.accountId == id }?.displayName ?? L.Usage.cursorTitle)
         case .cursor:
             return L.Usage.cursorTitle
         case .antigravity:
@@ -386,6 +399,7 @@ struct UsageDetailView: View {
 
     private func providerTitle(for provider: ProviderType) -> String {
         switch provider {
+        case .kimi, .glm: return provider.displayName
         case .codex: return L.Usage.codexTitle
         case .cursor: return L.Usage.cursorTitle
         case .antigravity: return L.Usage.antigravityTitle
@@ -403,11 +417,7 @@ struct UsageDetailView: View {
                     codexUsageData: usage,
                     showRemainingMode: showRemainingMode,
                     refreshState: refreshState,
-                    animationType: $codexAnimationType,
-                    rotationAngle: $rotationAngle,
-                    remainingModeAnimationTrigger: remainingModeAnimationTrigger,
-                    onRefresh: { onMenuAction?(.refresh) },
-                    onAnimationHint: { showAnimationHint($0) }
+                    onRefresh: { onMenuAction?(.refresh) }
                 )
                 .frame(maxWidth: .infinity)
             } else {
@@ -427,23 +437,35 @@ struct UsageDetailView: View {
                 reloginAction: .codexRelogin
             )
             .frame(maxWidth: .infinity)
-        case .cursor:
-            if let cursorUsageData {
+        case .plan(let provider):
+            if let quota = planQuotaStates[provider]?.quota {
+                PlanQuotaColumnView(quota: quota, showRemaining: showRemainingMode,
+                    isRefreshing: refreshState.isRefreshing, onRefresh: { onMenuAction?(.refresh) })
+            } else {
+                errorState(message: planQuotaStates[provider]?.error ?? L.Usage.loading,
+                    needsRelogin: false, reloginAction: .authSettings)
+            }
+        case .cursor, .cursorAccount:
+            let entry: CursorAccountUsage? = {
+                if case .cursorAccount(let id) = unit.source { return cursorAccountUsages.first { $0.accountId == id } }
+                return nil
+            }()
+            let usage = entry != nil ? entry?.usage : cursorUsageData
+            let needsRelogin = entry?.needsRelogin ?? cursorNeedsRelogin
+            if let cursorUsageData = usage {
                 CursorColumnView(
                     cursorUsageData: cursorUsageData,
                     showRemainingMode: showRemainingMode,
                     refreshState: refreshState,
-                    animationType: $cursorAnimationType,
-                    rotationAngle: $rotationAngle,
-                    remainingModeAnimationTrigger: remainingModeAnimationTrigger,
                     onRefresh: { onMenuAction?(.refresh) },
-                    onAnimationHint: { showAnimationHint($0) }
+                    errorMessage: entry?.errorMessage,
+                    lastUpdatedAt: entry?.lastUpdatedAt
                 )
                 .frame(maxWidth: .infinity)
             } else {
                 errorState(
-                    message: cursorNeedsRelogin ? L.Error.sessionExpired : (errorMessage ?? L.Usage.loading),
-                    needsRelogin: cursorNeedsRelogin,
+                    message: needsRelogin ? L.Error.sessionExpired : (entry?.errorMessage ?? L.Usage.loading),
+                    needsRelogin: needsRelogin,
                     reloginAction: .cursorRelogin
                 )
                 .frame(maxWidth: .infinity)
@@ -456,11 +478,7 @@ struct UsageDetailView: View {
                     antigravityUsageData: antigravityUsageData,
                     showRemainingMode: showRemainingMode,
                     refreshState: refreshState,
-                    animationType: $antigravityAnimationType,
-                    rotationAngle: $rotationAngle,
-                    remainingModeAnimationTrigger: remainingModeAnimationTrigger,
-                    onRefresh: { onMenuAction?(.refresh) },
-                    onAnimationHint: { showAnimationHint($0) }
+                    onRefresh: { onMenuAction?(.refresh) }
                 )
                 .frame(maxWidth: .infinity)
             } else {
@@ -474,31 +492,42 @@ struct UsageDetailView: View {
         }
     }
 
+    @ViewBuilder
     private func errorState(message: String, needsRelogin: Bool, reloginAction: MenuAction = .codexRelogin) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: needsRelogin ? "lock.open.trianglebadge.exclamationmark.fill" : "exclamationmark.triangle.fill")
-                .font(.system(size: 32))
-                .foregroundColor(.orange)
-            Text(message)
-                .font(.subheadline)
-                .multilineTextAlignment(.center)
-                .foregroundColor(.secondary)
-
-            if needsRelogin {
-                Button(action: { onMenuAction?(reloginAction) }) {
-                    Label(reloginButtonTitle(for: reloginAction), systemImage: "arrow.counterclockwise.circle.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-            } else {
-                Button(action: { onMenuAction?(.authSettings) }) {
-                    Label(L.Usage.goToSettings, systemImage: "key.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+        if message == L.Usage.loading && !needsRelogin {
+            VStack(spacing: 12) {
+                ProgressView().controlSize(.small)
+                Text(L.Usage.loading).font(.subheadline).foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity, minHeight: 140)
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: needsRelogin ? "lock.open.trianglebadge.exclamationmark.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 32))
+                    .foregroundColor(.orange)
+                Text(message)
+                    .font(.subheadline)
+                    .lineLimit(3)
+                    .help(message)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+
+                if needsRelogin {
+                    Button(action: { onMenuAction?(reloginAction) }) {
+                        Label(reloginButtonTitle(for: reloginAction), systemImage: "arrow.counterclockwise.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                } else {
+                    Button(action: { onMenuAction?(.authSettings) }) {
+                        Label(L.Usage.goToSettings, systemImage: "key.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                }
+            }
+            .padding()
         }
-        .padding()
     }
 
     private func reloginButtonTitle(for action: MenuAction) -> String {
@@ -509,32 +538,43 @@ struct UsageDetailView: View {
         }
     }
 
-    private var animationHintView: some View {
-        Group {
-            if showAnimationTypeHint {
-                AnimationTypeHintView(animationTypeName: animationTypeHintName)
-                    .padding(.top, -8)
-                    .padding(.bottom, 6)
-                    .transition(.opacity.combined(with: .scale))
-            }
-        }
-    }
-
     var body: some View {
-        VStack(spacing: contentSpacing) {
-            VStack(spacing: contentSpacing) {
-                headerView
-                mainContent
+        VStack(spacing: 12) {
+            headerView
+            mainContent
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
+                .frame(height: PopoverLayout.contentHeight(
+                    wrapRowCount: pageLayout.rowsPerPage,
+                    limitRowCount: limitRowCount,
+                    showsMultiple: showsMultipleProviders
+                ) - PopoverLayout.chromeHeight, alignment: .top)
+            if pageLayout.pageCount > 1 {
+                HStack(spacing: 12) {
+                    Button { currentPage = max(0, visiblePage - 1) } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .disabled(visiblePage == 0)
+                    .accessibilityLabel(Text("usage.previous_page"))
+                    Text("\(visiblePage + 1) / \(pageLayout.pageCount)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Button { currentPage = min(pageLayout.pageCount - 1, visiblePage + 1) } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .disabled(visiblePage == pageLayout.pageCount - 1)
+                    .accessibilityLabel(Text("usage.next_page"))
+                }
+                .buttonStyle(.borderless)
+                .frame(height: 20)
             }
-            .offset(y: showAnimationTypeHint ? -18 : 0)
-
-            animationHintView
-            Spacer()
         }
-        .frame(width: popoverWidth, height: contentHeight)
-        .animation(.easeInOut(duration: 0.25), value: showAnimationTypeHint)
+        .padding(.bottom, 16)
+        .frame(width: popoverWidth, height: pageLayout.height, alignment: .top)
+        .background(reduceTransparency || contrast == .increased ? Color(nsColor: .windowBackgroundColor) : Color.clear)
         .id(localization.updateTrigger)
         .onAppear {
+            currentPage = 0
             orderedProviders = activeProviders
             if !UserDefaults.standard.bool(forKey: "ringShowsRemaining.defaultMigrated") {
                 UserSettings.shared.showRemainingMode = true
@@ -549,14 +589,20 @@ struct UsageDetailView: View {
                 orderedProviders = newProviders
             }
         }
-        .onChange(of: settings.showRemainingMode) { _ in
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                remainingModeAnimationTrigger += 1
+        .onReceive(Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()) { _ in
+            if draggedProvider != nil && NSEvent.pressedMouseButtons == 0 {
+                draggedProvider = nil
+                dropTargetProvider = nil
             }
+        }
+        .onChange(of: reduceMotion) { reduced in
+            if reduced { stopRotationAnimation() }
+            else if refreshState.isRefreshing { startRotationAnimation() }
         }
         .onHover { _ in
             if NSEvent.pressedMouseButtons == 0 && draggedProvider != nil {
                 draggedProvider = nil
+                dropTargetProvider = nil
             }
         }
         .onChange(of: refreshState.isRefreshing) { newValue in
@@ -564,8 +610,8 @@ struct UsageDetailView: View {
         }
         .onDisappear {
             draggedProvider = nil
+            dropTargetProvider = nil
             stopRotationAnimation()
-            animationTypeHintDismissWorkItem?.cancel()
         }
         #if DEBUG
         .background(UserSettings.shared.debugKeepDetailWindowOpen ? Color.white : Color.clear)
@@ -574,30 +620,22 @@ struct UsageDetailView: View {
         #endif
     }
 
-    private func showAnimationHint(_ animationTypeName: String) {
-        animationTypeHintDismissWorkItem?.cancel()
-        animationTypeHintName = animationTypeName
-        withAnimation(.easeInOut(duration: 0.25)) {
-            showAnimationTypeHint = true
-        }
-
-        let dismissWorkItem = DispatchWorkItem {
-            withAnimation(.easeInOut(duration: 0.25)) {
-                showAnimationTypeHint = false
-            }
-        }
-        animationTypeHintDismissWorkItem = dismissWorkItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: dismissWorkItem)
-    }
 }
 
 private struct ProviderDropDelegate: DropDelegate {
     let item: ProviderType
     @Binding var providers: [ProviderType]
     @Binding var draggedItem: ProviderType?
+    @Binding var dropTarget: ProviderType?
+    let reduceMotion: Bool
 
     func dropEntered(info: DropInfo) {
-        // 悬停时不把被拖卡片插进目标位，避免半透明占位；只在松开时落位。
+        guard draggedItem != nil, draggedItem != item else { return }
+        dropTarget = item
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTarget == item { dropTarget = nil }
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -605,7 +643,7 @@ private struct ProviderDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        defer { draggedItem = nil }
+        defer { draggedItem = nil; dropTarget = nil }
 
         if providers.isEmpty {
             providers = UserSettings.shared.orderedActiveProviders()
@@ -617,7 +655,7 @@ private struct ProviderDropDelegate: DropDelegate {
             return false
         }
 
-        withAnimation(.easeInOut(duration: 0.22)) {
+        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1)) {
             providers.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
             UserSettings.shared.setProviderOrder(providers)
         }
@@ -628,6 +666,7 @@ private struct ProviderDropDelegate: DropDelegate {
 private extension UsageDetailView {
     func startRotationAnimation() {
         stopRotationAnimation()
+        guard !reduceMotion else { return }
         animationTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { _ in
             rotationAngle += 3
             if rotationAngle >= 360 {

@@ -133,7 +133,7 @@ final class CursorWebLoginCoordinator: ObservableObject {
                         provider: .cursor
                     )
                     let stored = UserSettings.shared.addCursorAccount(account)
-                    UserSettings.shared.switchToCursorAccount(stored)
+                    UserSettings.shared.setCursorAccountEnabled(stored, enabled: true)
                     self.loginState = .success(accountName: stored.displayName)
                     self.onAccountCreated?(stored)
                 case .failure(let error):

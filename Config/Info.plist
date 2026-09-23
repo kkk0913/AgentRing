@@ -49,7 +49,7 @@
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Agent Ring 需要蓝牙权限以向 Android 桌面副屏推送用量额度数据</string>
     <key>SUFeedURL</key>
-    <string>https://github.com/haorui-lab/agentRing/releases/latest/download/appcast.xml</string>
+    <string>https://github.com/kkk0913/AgentRing/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>$(SPARKLE_PUBLIC_ED_KEY)</string>
     <key>SUEnableInstallerLauncherService</key>

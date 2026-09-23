@@ -68,6 +68,19 @@ jobs:
           xcodebuild -resolvePackageDependencies -project AgentRing.xcodeproj -scheme AgentRing \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"
 
+      - name: Run release regression checks
+        run: |
+          bash Scripts/test-release-tools.sh
+          bash Scripts/test-release-history.sh
+          bash Scripts/test-changelog.sh
+          bash Scripts/test-credential-store.sh
+          bash Scripts/test-ring-display.sh
+          bash Scripts/test-multi-account-planning.sh
+          bash Scripts/test-cursor-multi-account.sh
+          bash Scripts/test-plan-quota.sh
+          bash Scripts/test-refresh-state.sh
+          bash Scripts/test-update-manager.sh "$RUNNER_TEMP/SourcePackages/artifacts/sparkle/Sparkle"
+
       - name: Build Release
         env:
           VERSION: ${{ steps.config.outputs.version }}
@@ -101,14 +114,15 @@ jobs:
           VERSION: ${{ steps.config.outputs.version }}
         run: |
           set -euo pipefail
-          # Fail on API errors instead of silently treating a network failure as first release.
-          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/previous-release.json"
-          swift Scripts/check-release-version.swift "$RUNNER_TEMP/previous-release.json" "$VERSION"
-          PREVIOUS_TAG=$(jq -r .tag_name "$RUNNER_TEMP/previous-release.json")
-          if jq -e '.assets[] | select(.name == "appcast.xml")' "$RUNNER_TEMP/previous-release.json" >/dev/null; then
-            gh release download "$PREVIOUS_TAG" --pattern appcast.xml --dir "$RUNNER_TEMP/previous-feed"
-            SIGN_UPDATE=$(find "$RUNNER_TEMP/SourcePackages/artifacts" -type f -name sign_update -print -quit)
-            printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --ed-key-file - --verify "$RUNNER_TEMP/previous-feed/appcast.xml"
+          bash Scripts/read-release-history.sh "$GITHUB_REPOSITORY" "$RUNNER_TEMP/previous-release.json"
+          if jq -e '.tag_name' "$RUNNER_TEMP/previous-release.json" >/dev/null; then
+            swift Scripts/check-release-version.swift "$RUNNER_TEMP/previous-release.json" "$VERSION"
+            PREVIOUS_TAG=$(jq -r .tag_name "$RUNNER_TEMP/previous-release.json")
+            if jq -e '.assets[] | select(.name == "appcast.xml")' "$RUNNER_TEMP/previous-release.json" >/dev/null; then
+              gh release download "$PREVIOUS_TAG" --pattern appcast.xml --dir "$RUNNER_TEMP/previous-feed"
+              SIGN_UPDATE=$(find "$RUNNER_TEMP/SourcePackages/artifacts" -type f -name sign_update -print -quit)
+              printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" --ed-key-file - --verify "$RUNNER_TEMP/previous-feed/appcast.xml"
+            fi
           fi
 
       # Every legacy client prefers any .zip and would run its broken shell installer.
@@ -165,8 +179,12 @@ jobs:
               exit 1
             fi
           else
-            PREVIOUS_TAG=$(jq -r .tag_name "$RUNNER_TEMP/previous-release.json" 2>/dev/null || "")
-            swift Scripts/generate-changelog.swift "$PREVIOUS_TAG" "$GITHUB_REF_NAME" docs/release-installation.md "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/release-notes.md"
+            PREVIOUS_TAG=$(jq -r '.tag_name // empty' "$RUNNER_TEMP/previous-release.json" 2>/dev/null || true)
+            if [[ -f "docs/release-$VERSION.md" ]]; then
+              cp "docs/release-$VERSION.md" "$RUNNER_TEMP/release-notes.md"
+            else
+              swift Scripts/generate-changelog.swift "$PREVIOUS_TAG" "$GITHUB_REF_NAME" docs/release-installation.md "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/release-notes.md"
+            fi
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Agent Ring $VERSION" \
               --notes-file "$RUNNER_TEMP/release-notes.md"
           fi

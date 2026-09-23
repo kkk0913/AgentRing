@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/haorui-lab/agentRing/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-latest%20release-0A84FF?style=for-the-badge" /></a>
+  <a href="https://github.com/kkk0913/AgentRing/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-latest%20release-0A84FF?style=for-the-badge" /></a>
 </p>
 
 <p align="center">
@@ -21,8 +21,8 @@
   <img alt="Swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white" />
   <img alt="Size" src="https://img.shields.io/badge/size-%3C%207%20MB-lightgrey" />
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green" />
-  <img alt="Latest release" src="https://img.shields.io/github/v/release/haorui-lab/agentRing?include_prereleases" />
-  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/haorui-lab/agentRing/ci.yml?branch=main&label=CI" />
+  <img alt="Latest release" src="https://img.shields.io/github/v/release/kkk0913/AgentRing?include_prereleases" />
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/kkk0913/AgentRing/ci.yml?branch=main&label=CI" />
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@
 
 ## Download
 
-1. Open [Latest Release](https://github.com/haorui-lab/agentRing/releases/latest)
+1. Open [Latest Release](https://github.com/kkk0913/AgentRing/releases/latest)
 2. Download `AgentRing-*-macos.dmg` (~7 MB)
 3. Quit the old version, open the DMG, and drag `AgentRing.app` into Applications, replacing the old copy
 4. If macOS blocks it, use **System Settings → Privacy & Security → Open Anyway**
@@ -92,7 +92,7 @@ Building your own display? Frame format and connection rules live in [`docs/BLUE
 **Requires**: macOS 13+, Xcode 15+
 
 ```bash
-git clone https://github.com/haorui-lab/agentRing.git
+git clone https://github.com/kkk0913/AgentRing.git
 cd agentRing
 open AgentRing.xcodeproj
 ```
@@ -129,3 +129,6 @@ Issues and pull requests are welcome. Companion-display ports should follow the 
 ## Notes
 
 - Bundle ID is `app.agentring.AgentRing`. On first upgrade, credentials and preferences migrate from the legacy ID `app.agentsring.AgentsRing`. Display name is **Agent Ring**.
+
+
+This fork is based on [haorui-lab/agentRing](https://github.com/haorui-lab/agentRing); original attribution and license are retained.

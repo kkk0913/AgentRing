@@ -65,13 +65,13 @@ struct AboutView: View {
                 .padding(.bottom, 20)
             
             // 仓库地址链接
-            Link(destination: URL(string: "https://github.com/haorui-lab/agentRing")!) {
+            Link(destination: URL(string: "https://github.com/kkk0913/AgentRing")!) {
                 HStack(spacing: 6) {
                     Image(systemName: "safari")
                         .font(.system(size: 13))
                         .foregroundColor(.accentColor)
 
-                    Text("haorui-lab/agentRing")
+                    Text("kkk0913/AgentRing")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.primary)
 
@@ -79,14 +79,8 @@ struct AboutView: View {
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(nsColor: .separatorColor).opacity(0.3))
-                )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.link)
 
             Spacer()
         }

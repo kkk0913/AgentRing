@@ -36,7 +36,6 @@ struct BluetoothSettingsView: View {
                     Text(L.SettingsBluetooth.enable)
                 }
                 .toggleStyle(.checkbox)
-                .focusable(false)
 
                 Text(L.SettingsBluetooth.description)
                     .font(.caption)
@@ -87,7 +86,7 @@ struct BluetoothSettingsView: View {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.caption)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.link)
                             .help("刷新附近设备")
                         }
                     }
@@ -146,7 +145,7 @@ struct BluetoothSettingsView: View {
                     .font(.callout)
                     .foregroundColor(.secondary)
 
-                HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {
                     // Android 副屏（排在前面）
                     Link(destination: URL(string: "https://github.com/davidhoo/agentRing-Android")!) {
                         HStack(spacing: 6) {
@@ -162,14 +161,8 @@ struct BluetoothSettingsView: View {
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color(nsColor: .separatorColor).opacity(0.3))
-                        )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.link)
 
                     // ESP32 LCD 硬件副屏
                     Link(destination: URL(string: "https://github.com/haorui-lab/agentRing-ESP32-LCD")!) {
@@ -186,14 +179,8 @@ struct BluetoothSettingsView: View {
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color(nsColor: .separatorColor).opacity(0.3))
-                        )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.link)
                 }
             }
         }

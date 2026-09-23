@@ -11,8 +11,12 @@ import AppKit
 final class DataRefreshManager: ObservableObject {
     /// 按账号的 API 服务实例池（token 缓存 / OAuth 单飞 / 轮换写回均按实例隔离）
     private var codexApiServices: [UUID: CodexAPIService] = [:]
-    private let cursorApiService = CursorAPIService()
+    private var cursorApiServices: [UUID: CursorAPIService] = [:]
     private let antigravityApiService = AntigravityAPIService()
+    @Published var planQuotaStates: [ProviderType: PlanQuotaState] = [:]
+    private var planServices: [ProviderType: PlanQuotaService] = [:]
+    private var fetchGeneration = 0
+    @Published var cursorAccountUsages: [CursorAccountUsage] = []
     private let timerManager = TimerManager()
     private let settings = UserSettings.shared
 
@@ -37,7 +41,7 @@ final class DataRefreshManager: ObservableObject {
     private let minimumAnimationDuration: TimeInterval = 1.0
     private var refreshActivity: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
-    private var cursorSessionExpiredNotified = false
+    private var cursorSessionExpiredNotifiedAccounts: Set<UUID> = []
     private var antigravitySessionExpiredNotified = false
     private var pendingFetches = 0
 
@@ -58,6 +62,7 @@ final class DataRefreshManager: ObservableObject {
 
     /// 本轮应拉取的 Codex 账号（启用 + 有凭据，顺序 = 配置顺序）
     private var fetchableCodexAccounts: [Account] {
+        guard settings.isProviderEnabled(.codex) else { return [] }
         #if DEBUG
         if shouldSuppressDebugCodexUsageForDisplayOptions {
             return []
@@ -73,7 +78,23 @@ final class DataRefreshManager: ObservableObject {
         !fetchableCodexAccounts.isEmpty
     }
 
+    private var fetchableCursorAccounts: [Account] {
+        guard settings.isProviderEnabled(.cursor) else { return [] }
+        #if DEBUG
+        if settings.debugModeEnabled {
+            return debugMockAccounts.prefix(2).map { account in
+                Account(id: account.id, credentialToken: account.credentialToken,
+                    accountIdentifier: "cursor-" + account.accountIdentifier,
+                    accountName: "Cursor " + account.accountName, alias: nil,
+                    createdAt: account.createdAt, provider: .cursor)
+            }
+        }
+        #endif
+        return settings.enabledCursorAccounts.filter { !$0.credentialToken.isEmpty }
+    }
+
     private var shouldFetchCursorUsage: Bool {
+        guard settings.isProviderEnabled(.cursor) else { return false }
         #if DEBUG
         return settings.debugModeEnabled || settings.hasValidCursorCredentials
         #else
@@ -82,6 +103,7 @@ final class DataRefreshManager: ObservableObject {
     }
 
     private var shouldFetchAntigravityUsage: Bool {
+        guard settings.isProviderEnabled(.antigravity) else { return false }
         #if DEBUG
         return settings.debugModeEnabled || settings.hasValidAntigravityCredentials
         #else
@@ -132,11 +154,26 @@ final class DataRefreshManager: ObservableObject {
     }
 
     func fetchUsage() {
+        fetchGeneration += 1
+        let plans = [ProviderType.kimi, .glm].filter { settings.isProviderEnabled($0) }
+        for provider in [ProviderType.kimi, .glm] where !plans.contains(provider) {
+            planServices.removeValue(forKey: provider)?.close()
+            planQuotaStates.removeValue(forKey: provider)
+        }
+        if !settings.isProviderEnabled(.codex) {
+            clearCodexUsageState()
+            codexApiServices.values.forEach { $0.cancelAllRequests() }
+            codexApiServices.removeAll()
+        }
         let codexAccountsToFetch = fetchableCodexAccounts
-        let fetchCursor = shouldFetchCursorUsage
+        reconcileCodexUsageState()
+        let cursorAccountsToFetch = fetchableCursorAccounts
+        let fetchCursor = !cursorAccountsToFetch.isEmpty
         let fetchAntigravity = shouldFetchAntigravityUsage
+        reconcileCursorUsageState()
+        pendingFetches = 0
 
-        guard !codexAccountsToFetch.isEmpty || fetchCursor || fetchAntigravity else {
+        guard !codexAccountsToFetch.isEmpty || fetchCursor || fetchAntigravity || !plans.isEmpty else {
             isLoading = false
             clearCodexUsageState()
             clearCursorUsageState()
@@ -149,17 +186,14 @@ final class DataRefreshManager: ObservableObject {
         isLoading = true
         errorMessage = nil
         lastAPIFetchTime = Date()
-        pendingFetches = codexAccountsToFetch.count + (fetchCursor ? 1 : 0) + (fetchAntigravity ? 1 : 0)
+        pendingFetches = codexAccountsToFetch.count + cursorAccountsToFetch.count + (fetchAntigravity ? 1 : 0) + plans.count
 
         for account in codexAccountsToFetch {
-            fetchCodexUsage(account)
+            fetchCodexUsage(account, countsTowardBatch: true)
         }
-        if fetchCursor {
-            fetchCursorUsage()
-        }
-        if fetchAntigravity {
-            fetchAntigravityUsage()
-        }
+        for account in cursorAccountsToFetch { fetchCursorUsage(account) }
+        if fetchAntigravity { fetchAntigravityUsage() }
+        for provider in plans { fetchPlanQuota(provider) }
     }
 
     private func codexApiService(for accountId: UUID) -> CodexAPIService {
@@ -180,10 +214,12 @@ final class DataRefreshManager: ObservableObject {
         }
     }
 
-    private func fetchCodexUsage(_ account: Account) {
+    private func fetchCodexUsage(_ account: Account, countsTowardBatch: Bool = false) {
+        guard settings.isProviderEnabled(.codex), settings.isCodexAccountEnabled(account.id) else { return }
+        let generation = fetchGeneration
         codexApiService(for: account.id).fetchUsage { [weak self] result in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, generation == self.fetchGeneration else { return }
                 switch result {
                 case .success(let data):
                     self.processCodexSuccess(data, account: account)
@@ -195,37 +231,71 @@ final class DataRefreshManager: ObservableObject {
                         Logger.menuBar.info("Codex 请求失败(\(account.displayName, privacy: .public)): \(error.localizedDescription)")
                     }
                 }
-                self.noteFetchFinished()
+                if countsTowardBatch { self.noteFetchFinished(generation: generation) }
             }
         }
     }
 
-    private func fetchCursorUsage() {
-        cursorApiService.fetchUsage { [weak self] result in
+    private func reconcileCursorUsageState() {
+        let cursorAccounts = fetchableCursorAccounts
+        cursorSessionExpiredNotifiedAccounts.formIntersection(Set(settings.cursorAccounts.map(\.id)))
+        let cursorMap = Dictionary(uniqueKeysWithValues: cursorAccountUsages.map { ($0.accountId, $0) })
+        cursorAccountUsages = cursorAccounts.map { account in
+            var entry = cursorMap[account.id] ?? CursorAccountUsage(accountId: account.id, displayName: account.displayName)
+            entry.displayName = account.displayName
+            return entry
+        }
+        for id in Array(cursorApiServices.keys) where !cursorAccounts.contains(where: { $0.id == id }) {
+            cursorApiServices.removeValue(forKey: id)?.cancelAllRequests()
+        }
+        syncPrimaryCursorUsage()
+    }
+
+    private func syncPrimaryCursorUsage() {
+        // Legacy consumers (companion displays) always use the first enabled account, never the first successful response.
+        cursorUsageData = cursorAccountUsages.first?.usage
+        cursorNeedsRelogin = cursorAccountUsages.contains { $0.needsRelogin }
+    }
+
+    private func fetchCursorUsage(_ account: Account) {
+        let generation = fetchGeneration
+        let service = cursorApiServices[account.id] ?? CursorAPIService(accountId: account.id)
+        cursorApiServices[account.id] = service
+        service.fetchUsage { [weak self] result in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, generation == self.fetchGeneration,
+                      let index = self.cursorAccountUsages.firstIndex(where: { $0.accountId == account.id }) else { return }
                 switch result {
                 case .success(let data):
-                    self.processCursorSuccess(data)
+                    self.cursorSessionExpiredNotifiedAccounts.remove(account.id)
+                    let previous = self.cursorAccountUsages[index].usage
+                    self.cursorAccountUsages[index] = CursorAccountUsage(accountId: account.id, displayName: account.displayName, usage: data, lastUpdatedAt: Date())
+                    if self.settings.notificationsEnabled {
+                        NotificationManager.shared.checkAndNotify(cursorUsageData: data, previousData: previous, account: account)
+                    }
                 case .failure(let error):
                     if case UsageError.unauthorized = error {
-                        self.markCursorNeedsRelogin()
-                    } else {
-                        Logger.menuBar.info("Cursor 请求失败: \(error.localizedDescription)")
-                        if self.cursorUsageData == nil && !self.codexHasAnyUsage && self.antigravityUsageData == nil {
-                            self.errorMessage = error.localizedDescription
+                        if self.settings.notificationsEnabled,
+                           self.cursorSessionExpiredNotifiedAccounts.insert(account.id).inserted {
+                            NotificationManager.shared.sendCursorSessionExpiredNotification(accountId: account.id, accountLabel: account.displayName)
                         }
+                        self.cursorAccountUsages[index].needsRelogin = true
+                        self.cursorAccountUsages[index].usage = nil
                     }
+                    self.cursorAccountUsages[index].errorMessage = error.localizedDescription
                 }
-                self.noteFetchFinished()
+                self.syncPrimaryCursorUsage()
+                self.pushBluetoothSync()
+                self.noteFetchFinished(generation: generation)
             }
         }
     }
 
     private func fetchAntigravityUsage() {
+        let generation = fetchGeneration
         antigravityApiService.fetchUsage { [weak self] result in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, generation == self.fetchGeneration else { return }
                 switch result {
                 case .success(let data):
                     self.processAntigravitySuccess(data)
@@ -242,36 +312,41 @@ final class DataRefreshManager: ObservableObject {
                         }
                     }
                 }
-                self.noteFetchFinished()
+                self.noteFetchFinished(generation: generation)
             }
         }
     }
 
-    private func noteFetchFinished() {
-        pendingFetches = max(0, pendingFetches - 1)
-        if pendingFetches == 0 {
-            isLoading = false
-            endRefreshAnimationWithMinimumDuration { }
+    private func fetchPlanQuota(_ provider: ProviderType) {
+        let generation = fetchGeneration
+        guard let configuration = settings.planConfigurations[provider] else {
+            planQuotaStates[provider] = PlanQuotaState(error: L.provider("configure_first"))
+            noteFetchFinished(generation: generation)
+            return
+        }
+        let service = planServices[provider] ?? PlanQuotaService()
+        planServices[provider] = service
+        service.fetch(provider: provider, configuration: configuration) { [weak self] result in
+            guard let self, generation == self.fetchGeneration, self.settings.isProviderEnabled(provider) else { return }
+            switch result {
+            case .success(let quota): self.planQuotaStates[provider] = PlanQuotaState(quota: quota)
+            case .failure(let error):
+                // Never show cached values as a live successful quota after an error.
+                self.planQuotaStates[provider] = PlanQuotaState(error: error.localizedDescription)
+            }
+            self.noteFetchFinished(generation: generation)
         }
     }
 
-    private func processCursorSuccess(_ data: CursorUsageData) {
-        let previous = cursorUsageData
-        cursorUsageData = data
-        cursorNeedsRelogin = false
-        if errorMessage == UsageError.sessionExpired.localizedDescription && !codexNeedsReloginState {
-            errorMessage = nil
+    private func noteFetchFinished(generation: Int) {
+        guard generation == fetchGeneration, pendingFetches > 0 else { return }
+        pendingFetches -= 1
+        if pendingFetches == 0 {
+            isLoading = false
+            endRefreshAnimationWithMinimumDuration { }
+            // Monitoring may synchronously start a new batch via refreshIntervalChanged.
+            publishSmartMonitoringUtilizations()
         }
-
-        publishSmartMonitoringUtilizations()
-
-        if settings.notificationsEnabled {
-            NotificationManager.shared.checkAndNotify(cursorUsageData: data, previousData: previous)
-        }
-
-        lastCursorResetsAt = data.included?.resetsAt
-
-        pushBluetoothSync()
     }
 
     private func processAntigravitySuccess(_ data: AntigravityUsageData) {
@@ -281,7 +356,6 @@ final class DataRefreshManager: ObservableObject {
             errorMessage = nil
         }
 
-        publishSmartMonitoringUtilizations()
         lastAntigravityResetsAt = data.primary?.resetsAt
 
         pushBluetoothSync()
@@ -309,25 +383,28 @@ final class DataRefreshManager: ObservableObject {
     }
 
     private func publishSmartMonitoringUtilizations() {
-        var utilizations: [ProviderType: Double] = [:]
-        // 多账号取最大用量（告急优先），节奏仍按平台一个键
-        let codexValues = codexAccountUsages.compactMap { $0.usage }.compactMap { monitoringUtilization(for: $0) }
-        if let value = codexValues.max() {
-            utilizations[.codex] = value
+        var utilizations: [String: Double] = [:]
+        for entry in codexAccountUsages {
+            if let usage = entry.usage, let value = monitoringUtilization(for: usage) {
+                utilizations["codex:\(entry.accountId)"] = value
+            }
         }
-        if let value = cursorUsageData?.included?.percentage {
-            utilizations[.cursor] = value
+        for entry in cursorAccountUsages {
+            if let value = entry.usage?.included?.percentage {
+                utilizations["cursor:\(entry.accountId)"] = value
+            }
         }
-        if let antigravity = antigravityUsageData,
-           let value = monitoringUtilization(for: antigravity) {
-            utilizations[.antigravity] = value
+        if let usage = antigravityUsageData, let value = monitoringUtilization(for: usage) {
+            utilizations["antigravity"] = value
         }
-        if !utilizations.isEmpty {
-            settings.updateSmartMonitoringMode(providerUtilizations: utilizations)
+        for (provider, state) in planQuotaStates {
+            for window in state.quota?.windows ?? [] { utilizations[provider.rawValue + ":" + window.id] = window.usedPercentage }
         }
+        settings.updateSmartMonitoringMode(accountUtilizations: utilizations)
     }
 
     private func clearCursorUsageState() {
+        cursorAccountUsages = []
         cursorUsageData = nil
         lastCursorResetsAt = nil
     }
@@ -339,26 +416,11 @@ final class DataRefreshManager: ObservableObject {
 
     private func resetCursorReloginState() {
         cursorNeedsRelogin = false
-        cursorSessionExpiredNotified = false
     }
 
     private func resetAntigravityReloginState() {
         antigravityNeedsRelogin = false
         antigravitySessionExpiredNotified = false
-    }
-
-    private func markCursorNeedsRelogin() {
-        cursorNeedsRelogin = true
-        if !cursorSessionExpiredNotified {
-            cursorSessionExpiredNotified = true
-            if settings.notificationsEnabled {
-                NotificationManager.shared.sendCursorSessionExpiredNotification()
-            }
-        }
-        if !codexHasAnyUsage && antigravityUsageData == nil {
-            errorMessage = UsageError.sessionExpired.localizedDescription
-        }
-        clearCursorUsageState()
     }
 
     private func markAntigravityNeedsRelogin() {
@@ -397,6 +459,17 @@ final class DataRefreshManager: ObservableObject {
         // 单账号网络瞬断不打扰；全部账号都无数据才写全局错误
         if !codexHasAnyUsage && cursorUsageData == nil && antigravityUsageData == nil {
             errorMessage = message
+        }
+    }
+
+    /// 账号启停或排序后保留仍启用账号的最后一次数据，避免菜单栏在重新拉取时跳动。
+    private func reconcileCodexUsageState() {
+        let previous = Dictionary(uniqueKeysWithValues: codexAccountUsages.map { ($0.accountId, $0) })
+        codexAccountUsages = fetchableCodexAccounts.map { account in
+            var entry = previous[account.id]
+                ?? CodexAccountUsage(accountId: account.id, displayName: account.displayName)
+            entry.displayName = account.displayName
+            return entry
         }
     }
 
@@ -470,7 +543,8 @@ final class DataRefreshManager: ObservableObject {
     private func startCodexTokenRefreshTimer() {
         timerManager.schedule(TimerID.codexTokenRefresh, interval: 10 * 60, repeats: true) { [weak self] in
             // 逐账号主动续期
-            self?.codexApiServices.values.forEach { $0.proactivelyRefreshIfNeeded() }
+            guard let self, self.settings.isProviderEnabled(.codex) else { return }
+            for account in self.fetchableCodexAccounts { self.codexApiServices[account.id]?.proactivelyRefreshIfNeeded() }
         }
     }
 
@@ -582,7 +656,6 @@ final class DataRefreshManager: ObservableObject {
             errorMessage = nil
         }
 
-        publishSmartMonitoringUtilizations()
 
         if settings.notificationsEnabled {
             NotificationManager.shared.checkAndNotify(codexUsageData: data, previousData: previousData, account: account)
@@ -616,10 +689,12 @@ final class DataRefreshManager: ObservableObject {
     }
 
     private func attemptLevel1SSRRefresh(_ account: Account) {
+        guard settings.isProviderEnabled(.codex), settings.isCodexAccountEnabled(account.id) else { return }
+        let generation = fetchGeneration
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, generation == self.fetchGeneration else { return }
             CodexTokenRefreshCoordinator.shared.refresh(accountId: account.id) { [weak self] result in
-                guard let self else { return }
+                guard let self, generation == self.fetchGeneration else { return }
                 switch result {
                 case .success(let freshAccessToken):
                     self.retryCodexWithAccessToken(freshAccessToken, account: account)
@@ -631,10 +706,12 @@ final class DataRefreshManager: ObservableObject {
     }
 
     private func attemptLevel2WebViewRefresh(_ account: Account) {
+        guard settings.isProviderEnabled(.codex), settings.isCodexAccountEnabled(account.id) else { return }
+        let generation = fetchGeneration
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, generation == self.fetchGeneration else { return }
             CodexSilentRefreshCoordinator.shared.refresh(accountId: account.id) { [weak self] result in
-                guard let self else { return }
+                guard let self, generation == self.fetchGeneration else { return }
                 switch result {
                 case .success:
                     self.fetchCodexUsage(account)
@@ -646,11 +723,11 @@ final class DataRefreshManager: ObservableObject {
     }
 
     private func retryCodexWithAccessToken(_ accessToken: String, account: Account) {
-        isLoading = true
+        guard settings.isProviderEnabled(.codex), settings.isCodexAccountEnabled(account.id) else { return }
+        let generation = fetchGeneration
         codexApiService(for: account.id).fetchUsageWithAccessToken(accessToken) { [weak self] usageResult in
             DispatchQueue.main.async {
-                guard let self else { return }
-                self.isLoading = false
+                guard let self, generation == self.fetchGeneration else { return }
                 switch usageResult {
                 case .success(let data):
                     self.processCodexSuccess(data, account: account)
@@ -691,27 +768,26 @@ final class DataRefreshManager: ObservableObject {
     }
 
     func handleAccountChanged(provider: ProviderType?) {
+        if let provider, provider == .kimi || provider == .glm { planQuotaStates.removeValue(forKey: provider) }
         if provider == nil || provider == .codex {
             resetCodexReloginState()
             for service in codexApiServices.values {
                 service.clearAccessTokenCache()
             }
             pruneCodexApiServices()
-            clearCodexUsageState()
+            reconcileCodexUsageState()
         }
         if provider == nil || provider == .cursor {
             resetCursorReloginState()
-            clearCursorUsageState()
+            reconcileCursorUsageState()
         }
         if provider == nil || provider == .antigravity {
             resetAntigravityReloginState()
             AntigravityAPIService.invalidateCredentialsCache()
             clearAntigravityUsageState()
         }
-        NotificationManager.shared.resetAllNotificationStates()
-        if shouldFetchCodexUsage || shouldFetchCursorUsage || shouldFetchAntigravityUsage {
-            fetchUsage()
-        }
+        // Also start timers when the first configured provider was added from the welcome screen.
+        startRefreshing()
     }
 
     private func endRefreshAnimationWithMinimumDuration(completion: @escaping () -> Void) {
@@ -726,9 +802,11 @@ final class DataRefreshManager: ObservableObject {
         let remaining = minimumAnimationDuration - elapsed
 
         if remaining > 0 {
+            let generation = fetchGeneration
             DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-                self?.refreshState.isRefreshing = false
-                self?.refreshState.refreshingProvider = nil
+                guard let self, generation == self.fetchGeneration else { return }
+                self.refreshState.isRefreshing = false
+                self.refreshState.refreshingProvider = nil
                 completion()
             }
         } else {
@@ -774,8 +852,10 @@ final class DataRefreshManager: ObservableObject {
     }
 
     func cleanup() {
+        planServices.values.forEach { $0.close() }
         timerManager.invalidateAll()
         endRefreshActivity()
+        cursorApiServices.values.forEach { $0.cancelAllRequests() }
         antigravityApiService.cancelAllRequests()
         for service in codexApiServices.values {
             service.cancelAllRequests()

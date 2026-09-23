@@ -15,8 +15,10 @@ class CursorAPIService: UsageProvider {
 
     private let safariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
-    init() {
-        let configuration = URLSessionConfiguration.default
+    private let accountId: UUID?
+
+    init(accountId: UUID? = nil, configuration: URLSessionConfiguration = .default) {
+        self.accountId = accountId
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 60
         configuration.httpCookieAcceptPolicy = .never
@@ -40,12 +42,14 @@ class CursorAPIService: UsageProvider {
 
         cancelAllRequests()
 
-        guard settings.hasValidCursorCredentials else {
+        let token = accountId.map { id in settings.cursorAccounts.first { $0.id == id }?.credentialToken ?? "" }
+            ?? settings.cursorSessionToken
+        guard !token.isEmpty else {
             completion(.failure(UsageError.noCredentials))
             return
         }
 
-        fetchUsageSummary(sessionToken: settings.cursorSessionToken, completion: completion)
+        fetchUsageSummary(sessionToken: token, completion: completion)
     }
 
     func validateSessionToken(_ sessionToken: String, completion: @escaping (Result<CursorAuthMeResponse, Error>) -> Void) {

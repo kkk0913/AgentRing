@@ -9,11 +9,9 @@ struct CursorColumnView: View {
     let cursorUsageData: CursorUsageData
     let showRemainingMode: Bool
     let refreshState: RefreshState
-    @Binding var animationType: UsageDetailView.LoadingAnimationType
-    @Binding var rotationAngle: Double
-    let remainingModeAnimationTrigger: Int
     var onRefresh: (() -> Void)?
-    var onAnimationHint: ((String) -> Void)?
+    var errorMessage: String? = nil
+    var lastUpdatedAt: Date? = nil
 
     private var activeTypes: [LimitType] {
         UserSettings.shared.getActiveCursorDisplayTypes(cursorUsageData: cursorUsageData)
@@ -26,7 +24,20 @@ struct CursorColumnView: View {
     var body: some View {
         VStack(spacing: 15) {
             ZStack {
-                if let included = cursorUsageData.included {
+                if let errorMessage {
+                    VStack(spacing: 6) {
+                        Label(L.provider("refresh.failed"), systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                        Text(L.provider("refresh.cached")).foregroundStyle(.secondary)
+                        if let lastUpdatedAt {
+                            Text(lastUpdatedAt.formatted(date: .abbreviated, time: .shortened))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption)
+                    .help(errorMessage)
+                    .accessibilityLabel(L.provider("refresh.failed") + ": " + errorMessage)
+                } else if let included = cursorUsageData.included {
                     ActivityRingView(
                         outerPercentage: included.percentage,
                         innerPercentage: activeTypes.contains(.cursorOnDemand)
@@ -39,25 +50,22 @@ struct CursorColumnView: View {
                                 ?? 0
                         ),
                         isRefreshing: isRefreshing,
-                        rotationAngle: rotationAngle,
-                        showRemainingMode: showRemainingMode,
-                        remainingModeAnimationTrigger: remainingModeAnimationTrigger,
-                        animationType: animationType
+                        showRemainingMode: showRemainingMode
                     )
                 }
             }
-            .frame(height: 114)
+            .frame(height: 100)
+            .accessibilityLabel(L.Usage.refresh)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                if refreshState.canRefresh && !refreshState.isRefreshing { onRefresh?() }
+            }
+            .help(L.Usage.refresh)
             .contentShape(Circle())
             .onTapGesture {
                 if refreshState.canRefresh && !refreshState.isRefreshing {
                     onRefresh?()
                 }
-            }
-            .onLongPressGesture(minimumDuration: 3.0) {
-                let allTypes = UsageDetailView.LoadingAnimationType.allCases
-                let currentIndex = allTypes.firstIndex(of: animationType) ?? 0
-                animationType = allTypes[(currentIndex + 1) % allTypes.count]
-                onAnimationHint?(animationType.name)
             }
 
             limitRows(for: activeTypes) { type in

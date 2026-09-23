@@ -13,13 +13,12 @@ struct ActivityRingView: View {
     let outerColor: Color
     let innerColor: Color
     let isRefreshing: Bool
-    let rotationAngle: Double
     let showRemainingMode: Bool
-    let remainingModeAnimationTrigger: Int
-    var animationType: UsageDetailView.LoadingAnimationType = .rainbow
-    var diameter: CGFloat = 110
-    /// 环线宽度：去掉中心文字后稍加粗，环在毛玻璃底上更扎实
-    var lineWidth: CGFloat = 13
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    var diameter: CGFloat = 88
+    /// 较轻的线宽让用量文字成为主要阅读信息。
+    var lineWidth: CGFloat = 9
     /// 内外环之间的间隙：同心几何（规范第 10 节），双环留出呼吸感
     private let ringSpacing: CGFloat = 5
 
@@ -32,26 +31,28 @@ struct ActivityRingView: View {
             ring(
                 diameter: diameter,
                 percentage: outerPercentage,
-                color: outerColor,
-                isInner: false
+                color: outerColor
             )
 
             if let innerPercentage {
                 ring(
                     diameter: innerDiameter,
                     percentage: innerPercentage,
-                    color: innerColor,
-                    isInner: true
+                    color: innerColor
                 )
             }
 
-            if !isRefreshing {
-                DetailUsageRingSweep(
-                    trigger: remainingModeAnimationTrigger,
-                    diameter: diameter + lineWidth,
-                    lineWidth: 3,
-                    color: outerColor
-                )
+            if isRefreshing {
+                if reduceMotion {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(L.Usage.loading)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel(L.Usage.loading)
+                }
             }
         }
         .frame(width: diameter, height: diameter)
@@ -60,7 +61,7 @@ struct ActivityRingView: View {
     private let usedPortionOpacity: Double = 0.08
 
     @ViewBuilder
-    private func ring(diameter: CGFloat, percentage: Double, color: Color, isInner: Bool) -> some View {
+    private func ring(diameter: CGFloat, percentage: Double, color: Color) -> some View {
         let range = UsageRingDisplay.displayedTrimRange(
             usedPercentage: percentage,
             showRemainingMode: showRemainingMode
@@ -70,14 +71,12 @@ struct ActivityRingView: View {
             showRemainingMode: showRemainingMode
         )
 
-        if isRefreshing {
-            loadingStroke(diameter: diameter, color: color, reverse: isInner)
-        } else {
+        Group {
             if let trackRange, abs(trackRange.to - trackRange.from) >= 0.002 {
                 ringStroke(
                     diameter: diameter,
                     range: trackRange,
-                    color: color.opacity(usedPortionOpacity)
+                    color: color.opacity(contrast == .increased ? 0.25 : usedPortionOpacity)
                 )
             }
 
@@ -102,39 +101,9 @@ struct ActivityRingView: View {
             .frame(width: diameter, height: diameter)
             .rotationEffect(.degrees(-90))
             .animation(
-                .spring(response: 0.42, dampingFraction: 0.78, blendDuration: 0.05),
+                reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1),
                 value: range
             )
     }
 
-    @ViewBuilder
-    private func loadingStroke(diameter: CGFloat, color: Color, reverse: Bool) -> some View {
-        let angle = reverse ? -rotationAngle : rotationAngle
-        switch animationType {
-        case .rainbow:
-            Circle()
-                .trim(from: 0, to: 0.7)
-                .stroke(
-                    AngularGradient(
-                        // 高光用环色自身提亮而非纯白，暗色模式毛玻璃底上不过曝
-                        gradient: Gradient(colors: [color, color.opacity(0.4), color.opacity(0.9), color]),
-                        center: .center
-                    ),
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .frame(width: diameter, height: diameter)
-                .rotationEffect(.degrees(angle))
-        case .dashed:
-            Circle()
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, dash: [8, 6]))
-                .frame(width: diameter, height: diameter)
-                .rotationEffect(.degrees(angle))
-        case .pulse:
-            Circle()
-                .trim(from: 0, to: 0.55)
-                .stroke(color.opacity(0.8), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .frame(width: diameter, height: diameter)
-                .rotationEffect(.degrees(angle))
-        }
-    }
 }

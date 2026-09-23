@@ -56,14 +56,15 @@ final class NotificationManager {
         )
     }
 
-    func checkAndNotify(cursorUsageData: CursorUsageData, previousData: CursorUsageData?) {
+    func checkAndNotify(cursorUsageData: CursorUsageData, previousData: CursorUsageData?, account: Account? = nil) {
         checkLimit(
             type: .cursorIncluded,
             current: cursorUsageData.included?.percentage,
             previous: previousData?.included?.percentage,
             currentResetsAt: cursorUsageData.included?.resetsAt,
             previousResetsAt: previousData?.included?.resetsAt,
-            accountId: UserSettings.shared.currentCursorAccountId
+            accountId: account?.id ?? UserSettings.shared.currentCursorAccount?.id,
+            accountLabel: account?.displayName
         )
         checkLimit(
             type: .cursorOnDemand,
@@ -71,7 +72,8 @@ final class NotificationManager {
             previous: previousData?.apiModels?.percentage ?? previousData?.onDemand?.percentage,
             currentResetsAt: cursorUsageData.apiModels?.resetsAt ?? cursorUsageData.onDemand?.resetsAt,
             previousResetsAt: previousData?.apiModels?.resetsAt ?? previousData?.onDemand?.resetsAt,
-            accountId: UserSettings.shared.currentCursorAccountId
+            accountId: account?.id ?? UserSettings.shared.currentCursorAccount?.id,
+            accountLabel: account?.displayName
         )
     }
 
@@ -191,14 +193,14 @@ final class NotificationManager {
         UNUserNotificationCenter.current().add(request)
     }
 
-    func sendCursorSessionExpiredNotification() {
+    func sendCursorSessionExpiredNotification(accountId: UUID, accountLabel: String) {
         let content = UNMutableNotificationContent()
         content.title = L.UsageNotification.cursorSessionExpiredTitle
-        content.body = L.UsageNotification.cursorSessionExpiredBody
+        content.body = Self.accountPrefix(accountLabel) + L.UsageNotification.cursorSessionExpiredBody
         content.sound = .default
 
         let request = UNNotificationRequest(
-            identifier: "cursor_session_expired",
+            identifier: "cursor_session_expired_\(accountId.uuidString)",
             content: content,
             trigger: nil
         )

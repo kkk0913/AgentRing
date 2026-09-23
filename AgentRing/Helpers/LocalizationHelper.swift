@@ -9,6 +9,7 @@ import Foundation
 /// 提供类型安全的本地化字符串访问方式
 /// 支持动态语言切换，根据用户设置返回对应语言的字符串
 enum L {
+    static func provider(_ key: String) -> String { localized("providers." + key) }
 
     enum App {
         static var name: String { localized("app.name") }
@@ -45,6 +46,11 @@ enum L {
         static var cancel: String { localized("account.cancel") }
         static var multiSelectHint: String { localized("account.multi_hint") }
         static var enableAccount: String { localized("account.enable_account") }
+        static var reorder: String { localized("account.reorder") }
+        static var moveUp: String { localized("account.move_up") }
+        static var moveDown: String { localized("account.move_down") }
+        static var accountDetails: String { localized("account.details") }
+        static var selectAccount: String { localized("account.select") }
         static var validateAndAdd: String { localized("account.validate_and_add") }
         static var multiOrgAdded: String { localized("account.multi_org_added") }
         static var codexAccounts: String { localized("account.codex_accounts") }
@@ -124,6 +130,10 @@ enum L {
         static var usageDisplaySection: String { localized("settings.general.usage_display_section") }
         static var usageDisplayRemainingHint: String { localized("settings.general.usage_display_hint_remaining") }
         static var usageDisplayUsedHint: String { localized("settings.general.usage_display_hint_used") }
+        static var menuBarCodexAccounts: String { localized("settings.general.menubar_codex_accounts") }
+        static var menuBarCodexAll: String { localized("settings.general.menubar_codex_all") }
+        static var menuBarCodexFirst: String { localized("settings.general.menubar_codex_first") }
+        static var menuBarCodexHint: String { localized("settings.general.menubar_codex_hint") }
         static var resetButton: String { localized("settings.general.reset_button") }
         static var resetSection: String { localized("settings.general.reset_section") }
         static var resetHint: String { localized("settings.general.reset_hint") }

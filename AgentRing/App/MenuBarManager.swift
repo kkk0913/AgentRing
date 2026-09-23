@@ -28,25 +28,10 @@ final class RefreshState: ObservableObject {
     }
 }
 
-private final class SettingsWindowDelegate: NSObject, NSWindowDelegate {
-    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        NSSize(width: 760, height: max(560, frameSize.height))
-    }
-
-    func windowShouldZoom(_ window: NSWindow, toFrame newFrame: NSRect) -> Bool {
-        var targetFrame = newFrame
-        targetFrame.size.width = 760
-        targetFrame.origin.x = window.frame.origin.x
-        window.setFrame(targetFrame, display: true, animate: true)
-        return false
-    }
-}
-
 final class MenuBarManager: ObservableObject {
     private let ui = MenuBarUI()
     private let dataManager = DataRefreshManager()
     private var settingsWindow: NSWindow?
-    private let settingsWindowDelegate = SettingsWindowDelegate()
     @ObservedObject private var settings = UserSettings.shared
     private var cancellables = Set<AnyCancellable>()
     private var windowCloseObserver: NSObjectProtocol?
@@ -54,6 +39,8 @@ final class MenuBarManager: ObservableObject {
 
     /// 多账号用量（顺序 = 启用账号配置顺序）
     @Published var codexAccountUsages: [CodexAccountUsage] = []
+    @Published var planQuotaStates: [ProviderType: PlanQuotaState] = [:]
+    @Published var cursorAccountUsages: [CursorAccountUsage] = []
     @Published var cursorUsageData: CursorUsageData?
     @Published var antigravityUsageData: AntigravityUsageData?
     @Published var isLoading = false
@@ -88,6 +75,20 @@ final class MenuBarManager: ObservableObject {
     }
 
     private func setupDataBindings() {
+        dataManager.$planQuotaStates.sink { [weak self] states in
+            self?.planQuotaStates = states
+            self?.ui.clearIconCache()
+            self?.updateMenuBarIcon()
+            self?.updatePopoverContent()
+        }.store(in: &cancellables)
+
+        dataManager.$cursorAccountUsages.sink { [weak self] entries in
+            self?.cursorAccountUsages = entries
+            self?.ui.clearIconCache()
+            self?.updateMenuBarIcon()
+        }.store(in: &cancellables)
+
+
         dataManager.$codexAccountUsages
             .sink { [weak self] usages in
                 self?.codexAccountUsages = usages
@@ -222,6 +223,9 @@ final class MenuBarManager: ObservableObject {
     }
 
     private func openPopover(relativeTo button: NSStatusBarButton) {
+        // Activating the app for the popover must not also bring an existing settings window forward.
+        // Keep its contents alive, but show it again only through an explicit settings action.
+        settingsWindow?.orderOut(nil)
         dataManager.refreshOnPopoverOpen()
         ui.setPopoverContentSize(usageDetailContentSize())
 
@@ -229,6 +233,11 @@ final class MenuBarManager: ObservableObject {
 
         ui.openPopover(relativeTo: button)
         startPopoverRefreshTimer()
+    }
+
+    var popoverAvailableSize: NSSize {
+        let frame = (ui.statusItem.button?.window?.screen ?? NSScreen.main)?.visibleFrame
+        return NSSize(width: max(320, (frame?.width ?? 1440) - 40), height: max(240, (frame?.height ?? 900) - 40))
     }
 
     private func usageDetailContentSize() -> NSSize {
@@ -239,23 +248,27 @@ final class MenuBarManager: ObservableObject {
         )
         let unitCount = PopoverLayout.unitCount(
             providers: activeProviders,
-            codexAccountCount: codexAccountUsages.count
+            codexAccountCount: codexAccountUsages.count,
+            cursorAccountCount: cursorAccountUsages.count
         )
-        let wrapRows = PopoverLayout.wrapRows(unitCount: max(unitCount, 1))
+        let wrapRows = PopoverLayout.wrapRows(unitCount: max(unitCount, 1), availableWidth: popoverAvailableSize.width)
         let maxRowColumns = wrapRows.max() ?? 1
 
         let limitRowCount = PopoverLayout.limitRowCount(
             codexUsages: codexAccountUsages.map { $0.usage },
             cursorUsageData: cursorUsageData,
-            antigravityUsageData: antigravityUsageData
+            antigravityUsageData: antigravityUsageData,
+            cursorUsages: cursorAccountUsages.compactMap { $0.usage },
+            planQuotas: planQuotaStates.values.compactMap { $0.quota }
         )
         let rowCount = max(limitRowCount, unitCount > 0 ? 1 : 0)
-        let height = PopoverLayout.contentHeight(
+        let layout = PopoverLayout.pageLayout(
             wrapRowCount: wrapRows.count,
             limitRowCount: rowCount,
-            showsMultiple: unitCount > 1
+            showsMultiple: unitCount > 1,
+            availableHeight: popoverAvailableSize.height
         )
-        return NSSize(width: PopoverLayout.windowWidth(maxRowColumns: maxRowColumns), height: height)
+        return NSSize(width: PopoverLayout.windowWidth(maxRowColumns: maxRowColumns), height: layout.height)
     }
 
     private func closePopover() {
@@ -264,6 +277,7 @@ final class MenuBarManager: ObservableObject {
     }
 
     private func updatePopoverContent() {
+        if ui.popover.isShown { ui.setPopoverContentSize(usageDetailContentSize()) }
         objectWillChange.send()
     }
 
@@ -282,11 +296,6 @@ final class MenuBarManager: ObservableObject {
     @objc func openAuthSettings() { openSettingsWindow(tab: 1) }
     @objc func openBluetoothSettings() { openSettingsWindow(tab: 2) }
     @objc func openAbout() { openSettingsWindow(tab: 3) }
-
-    @objc func switchCursorAccount(_ sender: NSMenuItem) {
-        guard let account = sender.representedObject as? Account else { return }
-        settings.switchToCursorAccount(account)
-    }
 
     @objc func checkForUpdates() {
         let versionToAcknowledge = AppUpdateManager.shared.availableVersion ?? latestVersion
@@ -319,15 +328,13 @@ final class MenuBarManager: ObservableObject {
 
             settingsWindow = NSWindow(contentViewController: hostingController)
             settingsWindow?.title = L.Window.settingsTitle
-            settingsWindow?.delegate = settingsWindowDelegate
             settingsWindow?.collectionBehavior = [.fullScreenNone]
-            // 宽度严格锁定 760（对齐 macOS 系统设置，禁止任何方式调整宽度）；高度仍可按需微调
             settingsWindow?.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            settingsWindow?.minSize = NSSize(width: 760, height: 560)
-            settingsWindow?.maxSize = NSSize(width: 760, height: 1200)
+            settingsWindow?.minSize = NSSize(width: 700, height: 560)
+            settingsWindow?.maxSize = NSSize(width: 1200, height: 1200)
             settingsWindow?.setContentSize(NSSize(width: 760, height: 640))
-            UserDefaults.standard.removeObject(forKey: "NSWindow Frame AgentRing.SettingsWindow.v4")
             settingsWindow?.center()
+            settingsWindow?.setFrameAutosaveName("AgentRing.SettingsWindow.v5")
 
             if let windowCloseObserver {
                 NotificationCenter.default.removeObserver(windowCloseObserver)
@@ -370,15 +377,13 @@ final class MenuBarManager: ObservableObject {
             }
         }
 
+        // Perform the transition in one event turn. A delayed makeKeyAndOrderFront could otherwise
+        // run after a later status-item click and reopen settings on top of the popover.
+        closePopover()
         NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            self?.settingsWindow?.center()
-            self?.settingsWindow?.makeKeyAndOrderFront(nil)
-        }
-
-        if ui.popover.isShown {
-            closePopover()
-        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        // Clear only the initial focus, preserving keyboard navigation once the user presses Tab.
+        settingsWindow?.makeFirstResponder(nil)
     }
 
     private func updateMenuBarIcon() {
@@ -386,6 +391,8 @@ final class MenuBarManager: ObservableObject {
             codexAccountUsages: codexAccountUsages,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData,
+            cursorAccountUsages: cursorAccountUsages,
+            planQuotaStates: planQuotaStates,
             hasUpdate: hasAvailableUpdate,
             shouldShowBadge: shouldShowUpdateBadge
         )
@@ -427,6 +434,9 @@ private struct UsageDetailHost: View {
             cursorNeedsRelogin: Binding(get: { manager.cursorNeedsRelogin }, set: { _ in }),
             antigravityNeedsRelogin: Binding(get: { manager.antigravityNeedsRelogin }, set: { _ in }),
             refreshState: manager.refreshState,
+            cursorAccountUsages: manager.cursorAccountUsages,
+            planQuotaStates: manager.planQuotaStates,
+            availableSize: manager.popoverAvailableSize,
             onMenuAction: { action in manager.handleMenuAction(action) },
             hasAvailableUpdate: $manager.hasAvailableUpdate,
             shouldShowUpdateBadge: Binding(get: { manager.shouldShowUpdateBadge }, set: { _ in })

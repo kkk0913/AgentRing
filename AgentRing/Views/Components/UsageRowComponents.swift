@@ -97,83 +97,6 @@ enum UsageRingDisplay {
     }
 }
 
-// MARK: - Ring Sweep
-
-/// 剩余/已用模式切换时的一次性外侧扫光。
-struct DetailUsageRingSweep: View {
-    let trigger: Int
-    let diameter: CGFloat
-    let lineWidth: CGFloat
-    let color: Color
-
-    @State private var rotation: Double = -90
-    @State private var opacity: Double = 0
-
-    var body: some View {
-        Circle()
-            .trim(from: 0, to: 0.18)
-            .stroke(
-                AngularGradient(
-                    gradient: Gradient(colors: [
-                        color.opacity(0.0),
-                        color.opacity(0.35),
-                        color.opacity(0.9),
-                        color.opacity(0.85),
-                        color.opacity(0.0)
-                    ]),
-                    center: .center
-                ),
-                style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-            )
-            .frame(width: diameter, height: diameter)
-            .rotationEffect(.degrees(rotation))
-            .opacity(opacity)
-            .scaleEffect(opacity > 0 ? 1.03 : 0.98)
-            .allowsHitTesting(false)
-            .onChange(of: trigger) { newValue in
-                guard newValue > 0 else { return }
-                runSweep()
-            }
-    }
-
-    private func runSweep() {
-        rotation = -90
-        opacity = 1
-
-        withAnimation(.easeOut(duration: 0.45)) {
-            rotation = 270
-            opacity = 0
-        }
-    }
-}
-
-// MARK: - Animation Type Hint View
-
-/// 动画类型切换提示（长按圆环后显示）
-struct AnimationTypeHintView: View {
-    let animationTypeName: String
-
-    private let rainbowColors: [Color] = [.red, .orange, .yellow, .green, .blue, .purple]
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "wand.and.stars")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(
-                    LinearGradient(colors: rainbowColors, startPoint: .leading, endPoint: .trailing)
-                )
-            Text(L.LoadingAnimation.current(animationTypeName))
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-                .foregroundStyle(
-                    LinearGradient(colors: rainbowColors, startPoint: .leading, endPoint: .trailing)
-                )
-        }
-        .padding(.horizontal, 12)
-        .fixedSize(horizontal: true, vertical: true)
-    }
-}
-
 // MARK: - Provider Divider
 
 /// 多厂商列之间的竖向分隔线：系统语义色 separatorColor，自动适配深浅色与增强对比度；
@@ -222,14 +145,14 @@ func limitRows<Row: View>(for types: [LimitType], @ViewBuilder row: @escaping (L
 enum UnifiedLimitRowMetrics {
     static let verticalPadding: CGFloat = 4
     /// 12pt 字体的实际行高
-    static let textLineHeight: CGFloat = 15
+    static let textLineHeight: CGFloat = 17
     /// 行间 Divider 的渲染厚度
     static let interRowDividerHeight: CGFloat = 1
 
     // 数值列固定通道宽度：所有行共用同一绝对基准，内容长短不一、
     // 剩余/重置模式切换都不会让百分比列漂移（规范 24 节数值列对齐）
     /// 百分比列通道宽：容纳 12pt semibold 的 "100%"
-    static let percentageColumnWidth: CGFloat = 36
+    static let percentageColumnWidth: CGFloat = 40
     /// 数值列通道宽：容纳 12pt 等宽数字的最长 "00h 00m" / "9/20 14:30"
     static let valueColumnWidth: CGFloat = 64
 
@@ -267,7 +190,7 @@ struct UnifiedLimitRow: View {
             // 百分比：固定通道右对齐，所有行的百分号钉在同一条垂直线上（规范 24 节）
             // 额度告急时文字变橙/变红（语义状态色，规范 12.4），字号字重不动以保住对齐通道
             Text(percentageLabel)
-                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                .font(.system(size: 13, weight: .semibold).monospacedDigit())
                 .foregroundColor(percentageColor)
                 .lineLimit(1)
                 .multilineTextAlignment(.trailing)
@@ -283,10 +206,7 @@ struct UnifiedLimitRow: View {
                 .frame(width: UnifiedLimitRowMetrics.valueColumnWidth, alignment: .trailing)
                 .layoutPriority(1)
                 .id(showRemainingMode ? "remaining" : "reset")
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity),
-                    removal: .move(edge: .bottom).combined(with: .opacity)
-                ))
+                .transition(.opacity)
         }
         .padding(.vertical, UnifiedLimitRowMetrics.verticalPadding)
         .padding(.horizontal, 2)

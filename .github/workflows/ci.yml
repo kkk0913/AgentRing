@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # test-changelog.sh 需要完整的 tag 历史（默认 depth=1 会拿不到 v0.1.7 等旧 tag）
+          # Keep history available for release and changelog checks.
           fetch-depth: 0
 
       - name: Show Xcode version
@@ -56,6 +56,13 @@ jobs:
 
       - name: Validate multi-account planning
         run: bash Scripts/test-multi-account-planning.sh
+
+      - name: Validate provider and refresh regressions
+        run: |
+          bash Scripts/test-cursor-multi-account.sh
+          bash Scripts/test-plan-quota.sh
+          bash Scripts/test-refresh-state.sh
+          bash Scripts/test-release-history.sh
 
       - name: Validate Sparkle delegate integration
         run: bash Scripts/test-update-manager.sh "$RUNNER_TEMP/SourcePackages/artifacts/sparkle/Sparkle"

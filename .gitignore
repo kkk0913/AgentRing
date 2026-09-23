@@ -44,3 +44,6 @@ build-temp-rel/
 
 # Local build cache redirect (sandbox workaround)
 .xcode-home/
+
+build-temp-debug/
+dist/

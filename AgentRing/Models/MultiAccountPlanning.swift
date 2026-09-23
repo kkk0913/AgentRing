@@ -13,6 +13,19 @@ enum MultiAccountPlanning {
     /// 弹窗单行最多 4 列，超出折行
     static let maxColumnsPerRow = 4
 
+    static func popoverWidth(columns: Int) -> CGFloat {
+        switch columns {
+        case 4...: return 1048
+        case 3: return 866
+        case 2: return 588
+        default: return 320
+        }
+    }
+
+    static func popoverColumns(availableWidth: CGFloat) -> Int {
+        (1...maxColumnsPerRow).reversed().first { popoverWidth(columns: $0) <= availableWidth } ?? 1
+    }
+
     struct DisplayUnit: Equatable {
         enum Source: Equatable {
             case codexAccount(UUID)
@@ -68,5 +81,19 @@ enum MultiAccountPlanning {
             remaining -= row
         }
         return rows
+    }
+}
+
+/// A complete refresh snapshot; each account contributes independently of higher-use accounts.
+struct AccountMonitoringSnapshot {
+    private var previous: [String: Double] = [:]
+
+    mutating func record(_ current: [String: Double]) -> Bool {
+        let changed = current.contains { key, value in
+            guard let old = previous[key] else { return true }
+            return abs(value - old) > 0.01
+        }
+        previous = current
+        return changed
     }
 }

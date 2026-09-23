@@ -9,8 +9,9 @@ import SwiftUI
 /// 侧边栏布局：左侧标签导航 + 右侧内容区，对齐 macOS 13+ 系统设置风格
 struct SettingsView: View {
     @ObservedObject private var settings = UserSettings.shared
-    @State private var selectedTab: Int
+    @State private var selectedTab: Int?
     @StateObject private var localization = LocalizationManager.shared
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     init(initialTab: Int = 0) {
         _selectedTab = State(initialValue: initialTab)
@@ -20,67 +21,78 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             sidebar
                 .frame(width: 188)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .background(Color(NSColor.windowBackgroundColor))
+                .background {
+                    if reduceTransparency {
+                        Color(nsColor: .windowBackgroundColor)
+                    } else {
+                        SettingsSidebarMaterial()
+                    }
+                }
 
             Divider()
 
-            Group {
-                switch selectedTab {
-                case 0:
-                    GeneralSettingsView()
-                case 1:
-                    AuthSettingsView()
-                case 2:
-                    BluetoothSettingsView()
-                case 3:
-                    AboutView()
-                default:
-                    GeneralSettingsView()
+            VStack(alignment: .leading, spacing: 0) {
+                Text((SidebarTab(rawValue: selectedTab ?? 0) ?? .general).title)
+                    .font(.system(size: 22, weight: .semibold))
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                    .padding(.bottom, 8)
+                    .accessibilityAddTraits(.isHeader)
+
+                Group {
+                    switch selectedTab ?? 0 {
+                    case 1: AuthSettingsView()
+                    case 2: BluetoothSettingsView()
+                    case 3: AboutView()
+                    default: GeneralSettingsView()
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
         }
-        .frame(width: 760)
+        .frame(minWidth: 700, idealWidth: 760, maxWidth: .infinity)
         .frame(minHeight: 560, maxHeight: .infinity)
         .id(localization.updateTrigger)
     }
 
-    // MARK: - Sidebar
-
     private var sidebar: some View {
-        VStack(spacing: 4) {
-            // 顶部品牌区
-            HStack(spacing: 10) {
-                if let icon = ImageHelper.createAppIcon(size: 28) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                if let icon = ImageHelper.createAppIcon(size: 24) {
                     Image(nsImage: icon)
                         .resizable()
-                        .frame(width: 28, height: 28)
-                        .cornerRadius(7)
+                        .frame(width: 24, height: 24)
+                        .cornerRadius(6)
                 }
                 Text(L.App.name)
                     .font(.headline)
-                Spacer()
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 18)
+            .padding(.top, 24)
 
-            ForEach(SidebarTab.allCases) { tab in
-                SidebarRow(
-                    icon: tab.icon,
-                    title: tab.title,
-                    isSelected: selectedTab == tab.rawValue
-                ) {
-                    selectedTab = tab.rawValue
-                }
+            List(SidebarTab.allCases, selection: $selectedTab) { tab in
+                Label(tab.title, systemImage: tab.icon)
+                    .padding(.vertical, 4)
+                    .tag(tab.rawValue)
             }
-
-            Spacer()
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
         }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 8)
     }
+}
+
+/// 系统侧栏材质会跟随窗口激活状态与系统外观。
+private struct SettingsSidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: - Sidebar Tab
@@ -109,39 +121,6 @@ private enum SidebarTab: Int, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Sidebar Row
-
-private struct SidebarRow: View {
-    let icon: String
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundColor(isSelected ? .accentColor : .secondary)
-                    .frame(width: 22)
-                Text(title)
-                    .font(.body)
-                    .foregroundColor(.primary)
-                Spacer()
-            }
-            .padding(.vertical, 7)
-            .padding(.horizontal, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-    }
-}
-
 /// Pins scroll content to the pane width so macOS radio/form controls
 /// cannot inflate the hosting view and shove the sidebar off the window.
 struct SettingsPaneScroll<Content: View>: View {
@@ -151,7 +130,8 @@ struct SettingsPaneScroll<Content: View>: View {
         GeometryReader { proxy in
             ScrollView {
                 content
-                    .padding()
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 16)
                     .frame(width: max(proxy.size.width, 1), alignment: .topLeading)
             }
         }

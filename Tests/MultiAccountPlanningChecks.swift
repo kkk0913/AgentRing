@@ -72,3 +72,11 @@ let units2 = MultiAccountPlanning.displayUnits(
     hasAntigravity: false
 )
 check(units2 == [.codexAccount(b)], "disabled account excluded from display units")
+
+// Screen adaptation must preserve every account and keep the content within the available width.
+for width: CGFloat in [320, 587, 588, 700, 865, 866, 1047, 1048, 1440] {
+    let columns = MultiAccountPlanning.popoverColumns(availableWidth: width)
+    let rows = MultiAccountPlanning.rowWidths(unitCount: 11, maxPerRow: columns)
+    check(rows.reduce(0, +) == 11 && rows.allSatisfy { $0 <= columns }, "all accounts retained at width \(width)")
+    check(MultiAccountPlanning.popoverWidth(columns: columns) <= width, "popover fits width \(width)")
+}
