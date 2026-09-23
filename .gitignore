@@ -39,6 +39,7 @@ Package.resolved
 *.swp
 *~
 build-temp/
+build-temp-rel/
 
 
 # Local build cache redirect (sandbox workaround)
