@@ -8,8 +8,8 @@
 
 <p align="center">
   <strong>AI usage rings in your macOS menu bar</strong><br />
-  See remaining Codex, Cursor, and Antigravity quota the way Apple Watch shows Activity rings.<br />
-  Native Swift. Installer under 7 MB.
+  Track Codex, Cursor, Antigravity, Kimi Code, and GLM Coding Plan usage from your menu bar.<br />
+  Native SwiftUI. Multiple accounts, side by side.
 </p>
 
 <p align="center">
@@ -19,10 +19,9 @@
 <p align="center">
   <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-black" />
   <img alt="Swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white" />
-  <img alt="Size" src="https://img.shields.io/badge/size-%3C%207%20MB-lightgrey" />
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="Latest release" src="https://img.shields.io/github/v/release/kkk0913/AgentRing?include_prereleases" />
-  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/kkk0913/AgentRing/ci.yml?branch=main&label=CI" />
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/kkk0913/AgentRing/release.yml?branch=release-preview%2F0.2.0&label=Release%20preview" />
 </p>
 
 <p align="center">
@@ -33,12 +32,16 @@
 
 | General Settings | Account Auth |
 | :---: | :---: |
-| <img src="docs/screenshots/settings-general.png" width="420" alt="General settings: usage display mode and alert thresholds" /> | <img src="docs/screenshots/settings-auth.png" width="420" alt="Account auth: multi-provider sign-in and switching" /> |
+| <img src="docs/screenshots/settings-general.png" width="420" alt="General settings: menu bar, appearance, and refresh" /> | <img src="docs/screenshots/settings-auth.png" width="420" alt="Account auth: provider selection, account toggles, and drag reordering" /> |
+
+Screenshots show the actual 0.2.0 SwiftUI views with demo accounts and simulated usage.
 
 ## Download
 
+**Status: 0.2.0 has passed the cloud release preview; no public release has been published yet.** Download the candidate from the [Release workflow](https://github.com/kkk0913/AgentRing/actions/workflows/release.yml) artifacts (GitHub sign-in required). Latest Release below becomes available after publication.
+
 1. Open [Latest Release](https://github.com/kkk0913/AgentRing/releases/latest)
-2. Download `AgentRing-*-macos.dmg` (~7 MB)
+2. Download `AgentRing-*-macos.dmg` (the 0.2.0 candidate is about 8 MB; universal Apple Silicon / Intel)
 3. Quit the old version, open the DMG, and drag `AgentRing.app` into Applications, replacing the old copy
 4. If macOS blocks it, use **System Settings → Privacy & Security → Open Anyway**
 
@@ -46,15 +49,31 @@
 
 ## Features
 
-- **AI usage aggregation**: glanceable menu bar rings; currently supports Codex, Cursor, and Antigravity
-- **Native settings feel**: sidebar + segmented auth
-- **Follows the system**: appearance and clock; UI languages: Simplified Chinese / English
-- **Multi-account**: login, switch, aliases; Antigravity uses local credential discovery
-- **Smart refresh**: faster when usage moves, slower when idle
-- **Short path**: popover `…` opens Settings directly
-- **Companion displays**: the same rings can stream to an idle Android phone, an e-paper panel, or an ESP32 LCD — all on-device, no cloud
+- **Multiple accounts at once**: independently enable, rename, and reorder Codex and Cursor accounts. Show all accounts or the first enabled account per provider in the menu bar.
+- **Provider controls**: check providers to monitor and click their names to configure them. Disabling monitoring retains accounts and credentials.
+- **Native settings**: a system sidebar, checkboxes, a light content area, resizable windows, light/dark appearance, and Chinese/English localization.
+- **Compact popover**: rings, used/remaining percentages, and reset times. Columns wrap to fit the screen and paginate when needed.
+- **Visible refresh state**: smart refresh and stable menu bar positions while loading or signed out. Cursor failures label cached data with its last successful update time.
+- **Quick access**: click the menu bar icon for usage; refresh and gear buttons sit at the top right of the popover.
+- **Companion sync**: supports the existing Bluetooth/USB display ecosystem, with the provider limits noted below.
+
+## Providers and Authentication
+
+| Provider | Authentication | Accounts / Notes |
+| :--- | :--- | :--- |
+| Codex | Sign-in authorization; existing Session Tokens remain supported | Multiple accounts; OAuth credentials can refresh automatically |
+| Cursor | Web login session | Independent requests, ordering, and authentication errors per account |
+| Antigravity | Local client credential discovery | Existing integration retained |
+| Kimi Code | Kimi Code API Key; select China or international region | One configuration; not a Moonshot pay-as-you-go API key |
+| GLM Coding Plan | API Key; select Zhipu or Z.ai region | One configuration; monitors Coding Plan quota |
+
+Open **Settings → Accounts** and select a provider on the left. For Kimi Code / GLM, enter an API key and choose **Verify & Enable**. Codex / Cursor account checkboxes control monitoring; drag accounts to set their display order.
+
+Credentials are stored encrypted locally. Legacy Kimi local-server tokens must be replaced with API keys. Kimi / GLM have passed mocked API regression checks; real-account results still require acceptance testing. Unavailable reset times appear as “—”. TypeSafe and MiMo are not integrated.
 
 ## Companion Display Ecosystem
+
+The companion protocol currently supports Codex, Cursor, and Antigravity. Kimi / GLM are not synchronized. For multi-account providers, the first enabled account is used.
 
 Agent Ring is the data source. After it collects quota on the Mac, it can push the same rings to a second screen on your desk — over classic Bluetooth, BLE, or USB, with no cloud in between. Turn on **Bluetooth companion sync** in Settings. 1:N is supported, so several displays can stay online at once.
 
@@ -89,11 +108,11 @@ Building your own display? Frame format and connection rules live in [`docs/BLUE
 
 ## Building from Source
 
-**Requires**: macOS 13+, Xcode 15+
+**Requires**: macOS 13+, Xcode 26+
 
 ```bash
 git clone https://github.com/kkk0913/AgentRing.git
-cd agentRing
+cd AgentRing
 open AgentRing.xcodeproj
 ```
 
@@ -113,6 +132,8 @@ xcodebuild -project AgentRing.xcodeproj -scheme AgentRing \
 - Apple Silicon or Intel
 
 ## Docs
+
+- 0.2.0 release notes (Chinese): [`docs/release-0.2.0.md`](docs/release-0.2.0.md)
 
 - Bluetooth companion protocol: [`docs/BLUETOOTH_PROTOCOL.md`](docs/BLUETOOTH_PROTOCOL.md)
 - Release process: [`docs/RELEASING.md`](docs/RELEASING.md)

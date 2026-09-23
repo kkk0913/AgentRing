@@ -8,8 +8,8 @@
 
 <p align="center">
   <strong>macOS 菜单栏上的 AI 用量圆环</strong><br />
-  像 Apple Watch 健身圆环那样，一眼看清 Codex、Cursor、Antigravity 还剩多少额度。<br />
-  Swift 原生，安装包不到 7 MB。
+  在菜单栏查看 Codex、Cursor、Antigravity、Kimi Code 和 GLM Coding Plan 用量。<br />
+  SwiftUI 原生界面，多账号并排展示。
 </p>
 
 <p align="center">
@@ -19,10 +19,9 @@
 <p align="center">
   <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-black" />
   <img alt="Swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white" />
-  <img alt="Size" src="https://img.shields.io/badge/size-%3C%207%20MB-lightgrey" />
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="Latest release" src="https://img.shields.io/github/v/release/kkk0913/AgentRing?include_prereleases" />
-  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/kkk0913/AgentRing/ci.yml?branch=main&label=CI" />
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/kkk0913/AgentRing/release.yml?branch=release-preview%2F0.2.0&label=Release%20preview" />
 </p>
 
 <p align="center">
@@ -33,12 +32,16 @@
 
 | 通用设置 | 账户认证 |
 | :---: | :---: |
-| <img src="docs/screenshots/settings-general.png" width="420" alt="通用设置：用量展示模式与告急阈值" /> | <img src="docs/screenshots/settings-auth.png" width="420" alt="账户认证：多平台登录与切换" /> |
+| <img src="docs/screenshots/settings-general.png" width="420" alt="通用设置：菜单栏展示、外观与刷新" /> | <img src="docs/screenshots/settings-auth.png" width="420" alt="账户认证：平台勾选、账号启停与拖动排序" /> |
+
+截图来自 0.2.0 的真实 SwiftUI 视图；账号和用量均为演示数据。
 
 ## 下载
 
+**当前状态：0.2.0 已通过云端试打包，尚未公开正式 Release。** 验收包可从 [Release 预览工作流](https://github.com/kkk0913/AgentRing/actions/workflows/release.yml) 的 Artifacts 下载（需要登录 GitHub）；下面的 Latest Release 在正式发布后可用。
+
 1. 打开 [Latest Release](https://github.com/kkk0913/AgentRing/releases/latest)
-2. 下载 `AgentRing-*-macos.dmg`（约 7 MB）
+2. 下载 `AgentRing-*-macos.dmg`（0.2.0 候选包约 8 MB，同时支持 Apple Silicon / Intel）
 3. 退出旧版，打开 DMG，将 `AgentRing.app` 拖入「应用程序」并选择替换
 4. 若系统提示无法验证开发者，在「系统设置 → 隐私与安全性」中选择「仍要打开」
 
@@ -46,15 +49,31 @@
 
 ## 功能
 
-- **AI 编程助手额度聚合**：菜单栏同屏圆环监视，当前支持 Codex、Cursor、Antigravity
-- **原生设置质感**：侧边栏 + 分段认证页
-- **跟随系统**：深浅色、时间格式；界面语言为简体中文 / English
-- **多账户**：登录、切换、别名；Antigravity 使用本机凭证探测
-- **智能刷新**：用量变化时加快，空闲时放慢
-- **极简入口**：数据面板 `…` 直接进入设置
-- **副屏生态**：同一套圆环可推到 Android 闲置机、EPD 墨水屏、ESP32 LCD，全程本机直连
+- **多账号同时展示**：Codex、Cursor 账号独立勾选、设置别名和拖动排序；菜单栏可显示全部账号或每个平台的首个账号。
+- **平台独立启停**：账号页左侧勾选监测平台，点击名称配置；关闭监测保留账号和凭据。
+- **原生设置界面**：系统侧栏、复选框、浅色内容区，支持窗口缩放及中英文、深浅色切换。
+- **紧凑用量弹框**：圆环、已用/剩余百分比和重置时间并排展示；根据屏幕宽度折行，内容过多时分页。
+- **明确的刷新状态**：智能刷新；账号加载或失效时保留菜单栏位置。Cursor 请求失败时标明旧数据与上次成功更新时间。
+- **快捷入口**：点击菜单栏图标查看用量，弹框右上角提供刷新和齿轮设置入口。
+- **副屏同步**：支持既有蓝牙/USB 副屏生态；同步范围见下文。
+
+## 平台与认证
+
+| 平台 | 接入方式 | 多账号 / 注意事项 |
+| :--- | :--- | :--- |
+| Codex | 登录授权；兼容已有 Session Token | 多账号独立用量，OAuth 凭据支持自动续期 |
+| Cursor | 网页登录会话 | 多账号独立请求、排序与失效提示 |
+| Antigravity | 探测本机客户端凭据 | 保留现有方案 |
+| Kimi Code | Kimi Code API Key，选择国内或国际区域 | 单份配置；不是 Moonshot 按量 API Key |
+| GLM Coding Plan | API Key，选择智谱或 Z.ai 区域 | 单份配置；监测 Coding Plan 额度 |
+
+进入 **设置 → 账号**，点击左侧平台名称完成配置。Kimi Code / GLM 填写 API Key 后点击“验证并启用”。Codex / Cursor 的账号复选框控制是否监测，拖动调整展示顺序。
+
+凭据在本机加密保存。旧版 Kimi 本地 Token 需要重新配置为 API Key。Kimi / GLM 已通过模拟接口回归检查，真实账号结果仍需验收；接口未提供的重置时间显示为“—”。TypeSafe、MiMo 尚未接入。
 
 ## 副屏生态
+
+目前副屏协议支持 Codex、Cursor 和 Antigravity，Kimi / GLM 暂不参与同步。多账号平台同步第一个启用账号。
 
 Agent Ring 不只是菜单栏小圆环。Mac 端采集用量后，可以把同一套数据推到工位旁的第二块屏上——经典蓝牙、BLE 或 USB 直连，不经过云端。设置里打开「蓝牙副屏同步」即可，支持 1:N，多块副屏可同时在线。
 
@@ -89,11 +108,11 @@ flowchart LR
 
 ## 从源码构建
 
-**要求**：macOS 13+、Xcode 15+
+**要求**：macOS 13+、Xcode 26+
 
 ```bash
 git clone https://github.com/kkk0913/AgentRing.git
-cd agentRing
+cd AgentRing
 open AgentRing.xcodeproj
 ```
 
@@ -113,6 +132,8 @@ xcodebuild -project AgentRing.xcodeproj -scheme AgentRing \
 - Apple Silicon 或 Intel
 
 ## 文档
+
+- 0.2.0 更新说明：[`docs/release-0.2.0.md`](docs/release-0.2.0.md)
 
 - 蓝牙副屏协议：[`docs/BLUETOOTH_PROTOCOL.md`](docs/BLUETOOTH_PROTOCOL.md)
 - 发布流程：[`docs/RELEASING.md`](docs/RELEASING.md)
