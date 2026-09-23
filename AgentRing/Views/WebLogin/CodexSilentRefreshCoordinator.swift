@@ -28,6 +28,8 @@ final class CodexSilentRefreshCoordinator: NSObject {
     private var navigationDelegate: NavigationDelegate?
     private var timeoutTask: Task<Void, Never>?
     private var completion: ((Result<String, Error>) -> Void)?
+    /// 本次刷新对应的目标账号（didFinishNavigation 写回时使用）
+    private var activeAccountId: UUID?
 
     private let timeoutInterval: TimeInterval = 25
     private let safariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
@@ -53,6 +55,7 @@ final class CodexSilentRefreshCoordinator: NSObject {
 
         isRefreshing = true
         self.completion = completion
+        self.activeAccountId = accountId
 
         // 使用进程级共享 data store，与登录窗口的 WKWebView 共享同一套 cookie
         let config = WKWebViewConfiguration()
@@ -165,10 +168,10 @@ final class CodexSilentRefreshCoordinator: NSObject {
                 return
             }
 
-            let currentToken = accountId.map { UserSettings.shared.codexAccountToken($0) } ?? ""
+            let currentToken = activeAccountId.map { UserSettings.shared.codexAccountToken($0) } ?? ""
             if newToken != currentToken {
                 Logger.settings.notice("CodexSilentRefresh: 获取到新 session-token，静默写回 Keychain")
-                if let accountId {
+                if let accountId = activeAccountId {
                     UserSettings.shared.silentlyUpdateCodexSessionToken(accountId: accountId, token: newToken)
                 }
             } else {
@@ -195,6 +198,7 @@ final class CodexSilentRefreshCoordinator: NSObject {
         timeoutTask?.cancel()
         timeoutTask = nil
         isRefreshing = false
+        activeAccountId = nil
         webView?.navigationDelegate = nil
         webView = nil
         navigationDelegate = nil

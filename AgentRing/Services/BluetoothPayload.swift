@@ -101,7 +101,7 @@ enum BluetoothPayloadBuilder {
     ) -> BluetoothSyncPayload {
         let settings = UserSettings.shared
         let ordered = settings.orderedActiveProviders(
-            codexUsageData: codexUsageData,
+            hasCodexData: codexUsageData != nil,
             cursorUsageData: cursorUsageData,
             antigravityUsageData: antigravityUsageData
         )

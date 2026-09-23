@@ -206,7 +206,7 @@ struct BluetoothSettingsView: View {
             return
         }
         bleService.pushPayload(
-            codexUsageData: dataManager.codexData,
+            codexUsageData: dataManager.bluetoothCodexData,
             cursorUsageData: dataManager.cursorData,
             antigravityUsageData: dataManager.antigravityData
         )

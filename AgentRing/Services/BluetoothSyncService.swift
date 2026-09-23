@@ -163,7 +163,7 @@ final class BluetoothSyncService: NSObject {
                 return
             }
             self?.pushPayload(
-                codexUsageData: dataManager.codexData,
+                codexUsageData: dataManager.bluetoothCodexData,
                 cursorUsageData: dataManager.cursorData,
                 antigravityUsageData: dataManager.antigravityData
             )
